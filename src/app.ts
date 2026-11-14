@@ -6,6 +6,8 @@ import cookieParser from 'cookie-parser';
 import { notFoundHandler } from './middlewares/notFoundHandler';
 import { errorHandler } from './middlewares/errorHandler';
 import { optionalAuthenticate } from './middlewares/auth.middleware';
+import { connectDatabase } from './config/database';
+import mongoose from 'mongoose';
 import { authRoutes } from './modules/auth/auth.routes';
 import { adminRoutes } from './modules/admin/admin.routes';
 import { userRoutes } from './modules/user/user.routes';
@@ -45,11 +47,32 @@ app.use(optionalAuthenticate);
 
 // Health check endpoints
 app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'OK', uptime: process.uptime(), timestamp: new Date().toISOString() });
+  res.status(200).json({
+    status: 'OK',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
+  });
 });
 
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'OK', uptime: process.uptime(), timestamp: new Date().toISOString() });
+  res.status(200).json({
+    status: 'OK',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
+  });
+});
+
+// Serverless / Lambda database connection middleware
+// Ensures MongoDB connection is established and reused for all incoming API routes
+app.use(async (_req: Request, _res: Response, next) => {
+  try {
+    await connectDatabase();
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Auth Routes (mounted on both /auth and /api/v1/auth for portal compatibility)

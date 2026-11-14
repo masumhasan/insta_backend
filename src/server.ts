@@ -26,5 +26,9 @@ const startServer = async (): Promise<void> => {
   }
 };
 
-startServer();
+// Only listen locally or in standalone container mode; skip in Vercel serverless environment
+if (!process.env.VERCEL) {
+  startServer();
+}
 
+export default app;
