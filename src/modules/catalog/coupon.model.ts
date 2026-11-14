@@ -6,7 +6,10 @@ export interface ICouponDocument extends Document {
   discountValue: number;
   minOrderAmount?: number;
   validUntil?: Date;
-  status: 'active' | 'expired' | 'disabled';
+  status: 'active' | 'inactive' | 'expired' | 'disabled';
+  usageLimit?: number;
+  usageCount?: number;
+  description?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -18,7 +21,10 @@ const couponSchema = new Schema<ICouponDocument>(
     discountValue: { type: Number, required: true, default: 0 },
     minOrderAmount: { type: Number, default: 0 },
     validUntil: { type: Date },
-    status: { type: String, enum: ['active', 'expired', 'disabled'], default: 'active' },
+    status: { type: String, enum: ['active', 'inactive', 'expired', 'disabled'], default: 'active' },
+    usageLimit: { type: Number, default: 100 },
+    usageCount: { type: Number, default: 0 },
+    description: { type: String, default: 'Promotional Discount Coupon' },
   },
   { timestamps: true }
 );

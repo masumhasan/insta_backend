@@ -149,31 +149,120 @@ export class CatalogService {
   // Coupons
   static async getCoupons() {
     const coupons = await Coupon.find().sort({ createdAt: -1 }).lean();
-    return coupons.map((c: any) => ({
-      id: c._id.toString(),
-      code: c.code,
-      discount: c.discountValue || 10,
-      discountType: c.discountType || 'percentage',
-      discountValue: c.discountValue || 10,
-      expiryDate: c.endDate ? new Date(c.endDate).toLocaleDateString() : '12/31/2026',
-      usageLimit: (c as any).usageLimit || 100,
-      usageCount: c.usageCount || 0,
-      status: c.status || 'active',
-      description: (c as any).description || 'Promotional Discount Coupon',
-    }));
+    const now = new Date();
+    return coupons.map((c: any) => {
+      const rawDate = c.validUntil || (c as any).endDate;
+      let expiryDate = '12/31/2026';
+      let rawExpiry = '';
+      if (rawDate) {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) {
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          const year = d.getFullYear();
+          expiryDate = `${month}/${day}/${year}`;
+          rawExpiry = `${year}-${month}-${day}`;
+        }
+      }
+
+      // Determine active status: if expired by date and currently active, return expired
+      let status = c.status || 'active';
+      if (rawDate && new Date(rawDate) < now && status === 'active') {
+        status = 'expired';
+      }
+
+      return {
+        id: c._id.toString(),
+        _id: c._id.toString(),
+        code: c.code,
+        discount: c.discountValue || 10,
+        discountType: c.discountType || 'percentage',
+        discountValue: c.discountValue || 10,
+        expiryDate,
+        rawExpiry,
+        validUntil: rawDate ? new Date(rawDate).toISOString() : undefined,
+        usageLimit: c.usageLimit || 100,
+        usageCount: c.usageCount || 0,
+        status,
+        description: c.description || 'Promotional Discount Coupon',
+      };
+    });
   }
 
   static async createCoupon(payload: any) {
     const existing = await Coupon.findOne({ code: payload.code.toUpperCase() });
     if (existing) throw new AppError('Coupon code already exists.', 409);
-    const c = await Coupon.create({ ...payload, code: payload.code.toUpperCase() });
-    return { id: c._id.toString(), code: c.code, discountValue: c.discountValue };
+
+    const validUntil = payload.validUntil
+      ? new Date(payload.validUntil)
+      : payload.expiryDate
+      ? new Date(payload.expiryDate)
+      : payload.endDate
+      ? new Date(payload.endDate)
+      : undefined;
+
+    const discountValue = Number(payload.discountValue ?? payload.discount ?? 0);
+
+    const c = await Coupon.create({
+      code: payload.code.toUpperCase(),
+      discountType: payload.discountType || 'percentage',
+      discountValue,
+      minOrderAmount: Number(payload.minOrderAmount || 0),
+      validUntil,
+      status: payload.status || 'active',
+      usageLimit: Number(payload.usageLimit || 100),
+      usageCount: Number(payload.usageCount || 0),
+      description: payload.description || 'Promotional Discount Coupon',
+    });
+    return {
+      id: c._id.toString(),
+      code: c.code,
+      discountValue: c.discountValue,
+      status: c.status,
+      validUntil: c.validUntil,
+    };
   }
 
   static async updateCoupon(id: string, payload: any) {
-    const c = await Coupon.findByIdAndUpdate(id, payload, { new: true });
+    const updateData: any = {};
+    if (payload.code) updateData.code = payload.code.toUpperCase();
+    if (payload.discountType) updateData.discountType = payload.discountType;
+    if (payload.discountValue !== undefined || payload.discount !== undefined) {
+      updateData.discountValue = Number(payload.discountValue ?? payload.discount);
+    }
+    if (payload.minOrderAmount !== undefined) {
+      updateData.minOrderAmount = Number(payload.minOrderAmount);
+    }
+    if (payload.validUntil !== undefined || payload.expiryDate !== undefined || payload.endDate !== undefined) {
+      const dateStr = payload.validUntil ?? payload.expiryDate ?? payload.endDate;
+      if (dateStr) {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) {
+          updateData.validUntil = d;
+        }
+      } else {
+        updateData.validUntil = null;
+      }
+    }
+    if (payload.status) {
+      updateData.status = payload.status;
+    }
+    if (payload.usageLimit !== undefined) {
+      updateData.usageLimit = Number(payload.usageLimit);
+    }
+    if (payload.description) {
+      updateData.description = payload.description;
+    }
+
+    const c = await Coupon.findByIdAndUpdate(id, updateData, { new: true });
     if (!c) throw new AppError('Coupon not found.', 404);
-    return { id: c._id.toString(), code: c.code, discountValue: c.discountValue };
+    return {
+      id: c._id.toString(),
+      code: c.code,
+      discountValue: c.discountValue,
+      status: c.status,
+      validUntil: c.validUntil,
+    };
   }
 
   static async deleteCoupon(id: string) {
