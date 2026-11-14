@@ -69,12 +69,26 @@ export class UserService {
       image: u.imageUrl || u.image || '',
       company: u.company || 'Instapost',
       office: u.office || '',
-      brokerage: u.brokerage || '',
+      brokerage: u.brokerage || u.crm?.brokerage || '',
       staffRole: u.staffRole || '',
       parentAgentId: u.parentAgentId || '',
       paymentMethodPreference: u.paymentMethodPreference || '',
       teamLeadApplication: u.teamLeadApplication || { status: 'none' },
       crm: u.crm || {},
+      lastContactDate: u.lastContactDate || u.crm?.lastContactDate || '',
+      nextContactDate: u.nextContactDate || u.crm?.nextContactDate || '',
+      contactNote: u.contactNote || u.crm?.contactNote || (u.activityNotes?.[0]?.text) || (u.crm?.notes?.[0]?.text) || '',
+      activityNotes: (u.activityNotes && u.activityNotes.length > 0)
+        ? u.activityNotes
+        : (u.crm?.notes && u.crm.notes.length > 0)
+          ? u.crm.notes.map((n: any) => ({
+              id: n.id || String(n._id || Date.now()),
+              text: n.text || n.note || '',
+              date: n.date || (n.createdAt ? new Date(n.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recently'),
+              author: n.author || 'Current User',
+              initials: n.initials || 'CU',
+            }))
+          : [],
       status: u.status,
     }));
 
@@ -173,6 +187,31 @@ export class UserService {
     if (payload.paymentMethodPreference !== undefined) {
       user.paymentMethodPreference = payload.paymentMethodPreference;
     }
+    if (payload.lastContactDate !== undefined) {
+      user.lastContactDate = payload.lastContactDate;
+      if (!user.crm) user.crm = {};
+      user.crm.lastContactDate = payload.lastContactDate;
+    }
+    if (payload.nextContactDate !== undefined) {
+      user.nextContactDate = payload.nextContactDate;
+      if (!user.crm) user.crm = {};
+      user.crm.nextContactDate = payload.nextContactDate;
+    }
+    if (payload.contactNote !== undefined) {
+      user.contactNote = payload.contactNote;
+      if (!user.crm) user.crm = {};
+      user.crm.contactNote = payload.contactNote;
+    }
+    if (payload.activityNotes !== undefined) {
+      user.activityNotes = payload.activityNotes;
+      if (!user.crm) user.crm = {};
+      user.crm.activityNotes = payload.activityNotes;
+    }
+    if (payload.notes !== undefined) {
+      user.activityNotes = payload.notes;
+      if (!user.crm) user.crm = {};
+      user.crm.activityNotes = payload.notes;
+    }
     if (payload.crm && typeof payload.crm === 'object') {
       user.crm = { ...(user.crm || {}), ...payload.crm };
     }
@@ -192,9 +231,16 @@ export class UserService {
 
     return {
       id: user._id.toString(),
+      _id: user._id.toString(),
       name: user.name,
       email: user.email,
       role: user.role,
+      phone: user.phone || '',
+      brokerage: user.brokerage || '',
+      lastContactDate: user.lastContactDate || '',
+      nextContactDate: user.nextContactDate || '',
+      contactNote: user.contactNote || '',
+      activityNotes: user.activityNotes || [],
       status: user.status,
       imageUrl: user.imageUrl || '',
       publicId: user.publicId || '',
@@ -271,22 +317,41 @@ export class UserService {
     return user.teamLeadApplication;
   }
 
-  static async addCrmNote(id: string, payload: { text: string; author?: string }) {
+  static async addCrmNote(id: string, payload: { text: string; author?: string; initials?: string }) {
     const user = await User.findById(id);
     if (!user) throw new AppError('User not found.', 404);
     const text = String(payload.text || '').trim();
     if (!text) throw new AppError('Note text is required.', 400);
 
-    const existingCrm = user.crm || {};
-    const notes = Array.isArray(existingCrm.notes) ? [...existingCrm.notes] : [];
+    const now = new Date();
+    const formattedDate = `${now.toLocaleString('default', { month: 'short' })} ${now.getDate()}, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    const author = payload.author || 'Current User';
+    const initials = payload.initials || author.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() || 'CU';
+
     const entry = {
       id: `note-${Date.now()}`,
       text,
-      author: payload.author || 'Sign Company',
-      createdAt: new Date().toISOString(),
+      author,
+      initials,
+      date: formattedDate,
+      createdAt: now.toISOString(),
     };
+
+    if (!user.activityNotes) user.activityNotes = [];
+    user.activityNotes.unshift(entry as any);
+
+    const existingCrm = user.crm || {};
+    const notes = Array.isArray(existingCrm.notes) ? [...existingCrm.notes] : [];
     notes.unshift(entry);
     user.crm = { ...existingCrm, notes };
+    user.contactNote = text;
+
+    const todayDateStr = now.toLocaleDateString('en-US');
+    if (!user.lastContactDate) {
+      user.lastContactDate = todayDateStr;
+      user.crm.lastContactDate = todayDateStr;
+    }
+
     await user.save();
 
     await NotificationService.notifyMentions(text, entry.author, user._id.toString());

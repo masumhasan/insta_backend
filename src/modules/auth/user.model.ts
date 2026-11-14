@@ -43,6 +43,16 @@ export interface IUserDocument extends Document {
     submittedAt?: string;
   };
   crm?: Record<string, any>;
+  lastContactDate?: string;
+  nextContactDate?: string;
+  contactNote?: string;
+  activityNotes?: Array<{
+    id: string;
+    text: string;
+    date: string;
+    author?: string;
+    initials?: string;
+  }>;
   permissions?: Record<string, boolean>;
   status: 'active' | 'blocked' | 'pending_approval' | 'pending' | 'rejected';
   failedLoginAttempts: number;
@@ -82,6 +92,21 @@ const userSchema = new Schema<IUserDocument>(
     },
     teamLeadApplication: { type: Schema.Types.Mixed, default: { status: 'none' } },
     crm: { type: Schema.Types.Mixed, default: {} },
+    lastContactDate: { type: String, default: '' },
+    nextContactDate: { type: String, default: '' },
+    contactNote: { type: String, default: '' },
+    activityNotes: {
+      type: [
+        {
+          id: { type: String },
+          text: { type: String, required: true },
+          date: { type: String },
+          author: { type: String, default: 'Current User' },
+          initials: { type: String, default: 'CU' },
+        },
+      ],
+      default: [],
+    },
     permissions: { type: Schema.Types.Mixed, default: {} },
     status: {
       type: String,
