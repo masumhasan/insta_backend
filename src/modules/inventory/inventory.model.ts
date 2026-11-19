@@ -15,12 +15,15 @@ export interface IInventoryDocument extends Document {
   itemType?: string;
   size: string;
   owner: string;
+  assignedAgent?: string;
+  assignedAgentId?: mongoose.Types.ObjectId | string;
   office?: string;
   barcode?: string;
   available: number;
   installed: number;
   total: number;
   location: string;
+  status: string;
   imageUrl?: string;
   publicId?: string;
   qrCode?: string;
@@ -55,12 +58,15 @@ const inventorySchema = new Schema<IInventoryDocument>(
     itemType: { type: String, default: 'Sign post' },
     size: { type: String, required: true, default: 'Standard' },
     owner: { type: String, required: true, default: 'Instapost LLC' },
+    assignedAgent: { type: String, default: '', trim: true },
+    assignedAgentId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     office: { type: String, default: '' },
     barcode: { type: String, default: '', index: true },
     available: { type: Number, required: true, default: 0 },
     installed: { type: Number, required: true, default: 0 },
     total: { type: Number, required: true, default: 0 },
     location: { type: String, default: 'Warehouse-1 (Aisle 2, Bin 12)' },
+    status: { type: String, default: 'In Stock', trim: true },
     imageUrl: { type: String, default: '' },
     publicId: { type: String, default: '' },
     qrCode: { type: String, default: '' },

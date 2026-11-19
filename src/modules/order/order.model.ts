@@ -57,6 +57,7 @@ export interface IOrderDocument extends Document {
     reason: string;
     createdAt: string;
   }[];
+  events?: { type: string; at: Date }[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -121,8 +122,43 @@ const orderSchema = new Schema<IOrderDocument>(
         createdAt: { type: String },
       },
     ],
+    events: [
+      {
+        type: { type: String },
+        at: { type: Date, default: Date.now },
+        _id: false,
+      },
+    ],
   },
   { timestamps: true }
 );
+
+// Records dashboard events (scheduled / confirmed / cancelled / rescheduled / schedule_cancelled)
+// whenever an order is saved with a changed status or date.
+orderSchema.pre('save', async function (next) {
+  try {
+    if (this.isNew) return next();
+    const statusChanged = this.isModified('status');
+    const dateChanged = this.isModified('dueDate') || this.isModified('appointmentTime');
+    if (!statusChanged && !dateChanged) return next();
+
+    const now = new Date();
+    const add = (type: string) => this.events!.push({ type, at: now });
+    const cur = String(this.status || '');
+    if (statusChanged) {
+      const prevDoc = await mongoose.model('Order').findById(this._id).select('status').lean<{ status?: string }>();
+      const prev = String(prevDoc?.status || '');
+      if (/^cancelled$/i.test(cur)) add('cancelled');
+      else if (/^scheduled/i.test(cur)) add('scheduled');
+      else if (/^assigned/i.test(cur)) add('confirmed');
+      if (/^(scheduled|assigned)/i.test(prev) && /^pending/i.test(cur)) add('schedule_cancelled');
+    } else if (/^(scheduled|assigned)/i.test(cur)) {
+      add('rescheduled');
+    }
+    next();
+  } catch (e) {
+    next(e as Error);
+  }
+});
 
 export const Order = mongoose.model<IOrderDocument>('Order', orderSchema);

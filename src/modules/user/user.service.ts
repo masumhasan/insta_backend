@@ -23,7 +23,9 @@ export class UserService {
 
     if (query.role && query.role !== 'all') {
       const roles = String(query.role).split(',').map((r) => r.trim()).filter(Boolean);
-      filter.role = roles.length > 1 ? { $in: roles } : roles[0];
+      filter.role = {
+        $in: roles.map((r) => new RegExp(`^${r}$`, 'i')),
+      };
     }
 
     if (query.parentAgentId) {

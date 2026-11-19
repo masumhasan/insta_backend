@@ -47,6 +47,19 @@ const STATUS_FILTER_MAP: Record<string, string> = {
 const TYPE_ALIASES: Record<string, string> = {
   Change: 'Sign Change',
   change: 'Sign Change',
+  'new-sign-install': 'Installation',
+  'custom-print-order': 'Sign Printing',
+  'custom-order': 'Sign Printing',
+  'template-place-order': 'Sign Printing',
+  'for-sale-directionals': 'For Sale Directionals',
+  Directionals: 'For Sale Directionals',
+  'open-house-services': 'Open House Services',
+  'Open House': 'Open House Services',
+  'sign-removal': 'Removal',
+  'order-sign-removal': 'Removal',
+  'change-panel-rider': 'Sign Change',
+  'other-order-service': 'Other Services',
+  media: 'Media Services',
 };
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -287,9 +300,27 @@ export class OrderService {
 
   static async createOrder(payload: any, currentUser?: any) {
     let orderNumber = payload.orderNumber || payload.id;
-    if (!orderNumber || !orderNumber.startsWith('#')) {
+    if (!orderNumber || !String(orderNumber).startsWith('#')) {
+      let isUnique = false;
+      let candidate = '';
+      const latestOrder = await Order.findOne({ orderNumber: /^#\d+$/ }).sort({ createdAt: -1 }).lean();
+      let nextNum = 8000;
+      if (latestOrder && latestOrder.orderNumber) {
+        const numPart = parseInt(latestOrder.orderNumber.replace('#', ''), 10);
+        if (!isNaN(numPart)) nextNum = Math.max(nextNum, numPart);
+      }
       const count = await Order.countDocuments();
-      orderNumber = `#${8000 + count + 1 + Math.floor(Math.random() * 10)}`;
+      nextNum = Math.max(nextNum, 8000 + count) + 1;
+      while (!isUnique) {
+        candidate = `#${nextNum}`;
+        const existing = await Order.findOne({ orderNumber: candidate }).lean();
+        if (!existing) {
+          isUnique = true;
+        } else {
+          nextNum++;
+        }
+      }
+      orderNumber = candidate;
     }
 
     const pullList = Array.isArray(payload.pullList)
@@ -309,13 +340,33 @@ export class OrderService {
       : 150;
     const paymentMethod = payload.paymentMethod || 'credit_card';
 
+    let resolvedParentAgentId = payload.parentAgentId || currentUser?.parentAgentId || '';
+    if (payload.agentId && !resolvedParentAgentId && /^[0-9a-fA-F]{24}$/.test(String(payload.agentId))) {
+      const targetUser = await User.findById(payload.agentId).select('parentAgentId').lean();
+      if (targetUser?.parentAgentId) {
+        resolvedParentAgentId = targetUser.parentAgentId.toString();
+      }
+    }
+
+    let resolvedAgentName = payload.agent || currentUser?.name || 'Agent';
+    if (
+      payload.agentId &&
+      (!payload.agent || ['Agent', 'Admin Order', 'Sign Company Order'].includes(payload.agent)) &&
+      /^[0-9a-fA-F]{24}$/.test(String(payload.agentId))
+    ) {
+      const targetUser = await User.findById(payload.agentId).select('name').lean();
+      if (targetUser?.name) {
+        resolvedAgentName = targetUser.name;
+      }
+    }
+
     const order = await Order.create({
       orderNumber,
       type: TYPE_ALIASES[payload.type] || payload.type || 'Installation',
       address: payload.address || 'Dallas, TX',
-      agent: payload.agent || currentUser?.name || 'Agent',
+      agent: resolvedAgentName,
       agentId: payload.agentId || currentUser?._id?.toString(),
-      parentAgentId: payload.parentAgentId || currentUser?.parentAgentId || '',
+      parentAgentId: resolvedParentAgentId,
       orderDate: payload.orderDate || new Date().toLocaleDateString('en-GB'),
       dueDate: payload.dueDate || 'Standard',
       price: formatCurrencyPrice(payload.price, numericTotal),
@@ -334,6 +385,7 @@ export class OrderService {
       installerName: payload.installerName || '',
       installerEmail: payload.installerEmail || '',
       installerId: payload.installerId || '',
+      photos: normalizePhotos(payload.photos || (payload.imageUrl ? [{ imageUrl: payload.imageUrl, publicId: payload.publicId || '' }] : [])),
       pullList,
       specifications: payload.specifications || {},
     });

@@ -1,5 +1,6 @@
 import { User } from '../auth/user.model';
 import { Order } from '../order/order.model';
+import { getDashboardMetrics } from './dashboardMetrics.service';
 import { AppError } from '../../utils/apiError';
 import { extractImageFields, cleanupReplacedAsset } from '../../utils/imageGuard';
 import { CloudinaryService } from '../../utils/cloudinary.service';
@@ -170,9 +171,12 @@ export class AdminService {
       link: '/orders',
     }));
 
+    const metrics = await getDashboardMetrics();
+
     return {
+      metrics,
       monthlyRevenue: `$${totalRevenue.toLocaleString()}`,
-      todayDeposit: '$250',
+      todayDeposit: `$${metrics.todaysDeposit.toLocaleString()}`,
       totalOrders,
       inventoryItems: String(inventoryCount || 24),
       pendingApprovals,

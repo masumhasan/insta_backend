@@ -21,21 +21,22 @@ import { invoiceRoutes } from './modules/invoice/invoice.routes';
 
 const app: Application = express();
 
-// Security and utility middlewares
-app.use(helmet());
+// Security and utility middlewares - CORS must run before helmet to handle preflights properly
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin or localhost / 127.0.0.1 on any port
-      if (!origin || /^http:\/\/localhost:\d+$/.test(origin) || /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)) {
-        callback(null, true);
-      } else {
-        callback(null, true); // Permissive in dev/staging to avoid blocking frontend portals
-      }
+      // Allow requests with no origin (e.g. mobile apps/curl) or any origin in dev/production
+      callback(null, true);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-reset-token'],
+  })
+);
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
   })
 );
 

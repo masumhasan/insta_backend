@@ -9,7 +9,7 @@ const META_FIELDS = [
   'enableReplacementBilling', 'hardwareCosts', 'color', 'material',
   'postHeight', 'mountType', 'lockboxType', 'comboCode', 'shackleCode',
   'riderHeading', 'grommetPlacement', 'additionalSpecs', 'notes',
-  'allowCustomization', 'lastUpdated',
+  'allowCustomization', 'lastUpdated', 'status', 'assignedAgent', 'assignedAgentId',
 ] as const;
 
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
@@ -20,7 +20,9 @@ const resolveBarcode = (item: any, fallbackIndex = 0) =>
 const formatInventoryItem = async (item: any, idx = 0) => {
   const barcode = resolveBarcode(item, idx);
   const qrCode = await generateQrDataUrl(barcode);
-  const status = (item.available || 0) > 5 ? 'In Stock' : (item.available || 0) > 0 ? 'Low Stock' : 'Checked Out';
+  const status = item.status && String(item.status).trim() !== ''
+    ? String(item.status).trim()
+    : (item.available || 0) > 5 ? 'In Stock' : (item.available || 0) > 0 ? 'Low Stock' : 'Checked Out';
 
   const base: any = {
     id: idx + 1,
@@ -28,7 +30,9 @@ const formatInventoryItem = async (item: any, idx = 0) => {
     product: item.product,
     itemType: item.itemType || 'Sign post',
     size: item.size || 'Standard',
-    owner: item.owner || 'Instapost LLC',
+    owner: item.assignedAgent || item.owner || 'Instapost LLC',
+    assignedAgent: item.assignedAgent || item.owner || 'Instapost LLC',
+    assignedAgentId: item.assignedAgentId ? String(item.assignedAgentId) : null,
     office: item.office || '',
     barcode,
     qrCode,
@@ -80,6 +84,9 @@ export class InventoryService {
     const total = payload.total !== undefined ? Number(payload.total) : available + installed;
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields(payload);
     const barcode = payload.barcode || `BAR-${Date.now().toString().slice(-6)}`;
+    const status = payload.status || (available > 5 ? 'In Stock' : available > 0 ? 'Low Stock' : 'Checked Out');
+    const assignedAgent = payload.assignedAgent || payload.owner || 'Instapost LLC';
+    const assignedAgentId = payload.assignedAgentId || null;
 
     const extra: Record<string, any> = {};
     for (const key of META_FIELDS) {
@@ -90,7 +97,10 @@ export class InventoryService {
       product: payload.product || payload.name,
       itemType: payload.itemType || 'Sign post',
       size: payload.size || 'Standard',
-      owner: payload.owner || 'Instapost LLC',
+      owner: assignedAgent,
+      assignedAgent,
+      assignedAgentId,
+      status,
       office: payload.office || '',
       barcode,
       available,
@@ -105,9 +115,9 @@ export class InventoryService {
         {
           id: `hist-${Date.now()}`,
           date: new Date().toISOString().split('T')[0],
-          status: 'In Stock',
+          status,
           address: payload.location || 'Warehouse-1',
-          agent: payload.owner || 'Instapost LLC',
+          agent: assignedAgent,
           notes: `Initial inventory added (qty: ${total})`,
         },
       ],
@@ -124,7 +134,17 @@ export class InventoryService {
     if (payload.product || payload.name) existing.product = payload.product || payload.name;
     if (payload.itemType) existing.itemType = payload.itemType;
     if (payload.size !== undefined) existing.size = payload.size || 'Standard';
-    if (payload.owner) existing.owner = payload.owner;
+    if (payload.status !== undefined) existing.status = String(payload.status).trim();
+    if (payload.assignedAgent !== undefined) {
+      existing.assignedAgent = String(payload.assignedAgent).trim();
+      existing.owner = String(payload.assignedAgent).trim() || 'Instapost LLC';
+    } else if (payload.owner !== undefined) {
+      existing.owner = String(payload.owner).trim();
+      existing.assignedAgent = String(payload.owner).trim();
+    }
+    if (payload.assignedAgentId !== undefined) {
+      existing.assignedAgentId = payload.assignedAgentId || null;
+    }
     if (payload.office !== undefined) existing.office = payload.office;
     if (payload.barcode) existing.barcode = String(payload.barcode).trim();
     if (payload.location) existing.location = payload.location;
@@ -143,6 +163,18 @@ export class InventoryService {
 
     if (payload.historyEntry) {
       existing.history = [payload.historyEntry, ...(existing.history || [])];
+    } else if (payload.status && payload.status !== existing.status) {
+      existing.history = [
+        {
+          id: `hist-${Date.now()}`,
+          date: new Date().toISOString().split('T')[0],
+          status: payload.status,
+          address: existing.location || 'Warehouse-1',
+          agent: existing.assignedAgent || existing.owner,
+          notes: `Status changed to ${payload.status}`,
+        },
+        ...(existing.history || []),
+      ];
     } else if (payload.location || payload.available !== undefined || payload.installed !== undefined || payload.barcode) {
       existing.history = [
         {
