@@ -108,3 +108,9 @@ export const deleteServiceItem = asyncHandler(async (req: Request, res: Response
   await CatalogService.deleteServiceItem(req.params.id as string);
   return ApiResponse.success(res, 200, 'Service item deleted successfully');
 });
+
+export const getActiveAnnouncements = asyncHandler(async (req: Request, res: Response) => {
+  const portal = String(req.query.portal || "all");
+  const data = await CatalogService.getActiveAnnouncements(portal);
+  return ApiResponse.success(res, 200, "Active announcements retrieved", data);
+});

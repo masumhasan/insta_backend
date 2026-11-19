@@ -290,6 +290,32 @@ export class CatalogService {
     }));
   }
 
+  /**
+   * Announcements that are live for a portal: active, inside their start/end window, and targeted at
+   * "all" portals or the requested one. Newest first.
+   */
+  static async getActiveAnnouncements(portal: string) {
+    const now = new Date();
+    const items = await ServiceItem.find({ type: "announcement" }).sort({ createdAt: -1 }).lean();
+    return items
+      .filter((i: any) => {
+        const o = i.options || {};
+        if (o.active === false) return false;
+        if (o.startsAt && new Date(o.startsAt) > now) return false;
+        if (o.endsAt && new Date(new Date(o.endsAt).getTime() + 24 * 3600 * 1000) <= now) return false;
+        const audience: string[] = Array.isArray(o.audience) && o.audience.length ? o.audience : ["all"];
+        return audience.includes("all") || audience.includes(portal);
+      })
+      .slice(0, 5)
+      .map((i: any) => ({
+        id: i._id.toString(),
+        title: i.name,
+        message: i.description || "",
+        imageUrl: i.imageUrl || i.options?.imageUrl || "",
+        createdAt: i.createdAt,
+      }));
+  }
+
   static async createServiceItem(payload: any) {
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields(payload);
     const data = { ...payload };

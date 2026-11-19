@@ -11,6 +11,7 @@ import {
   addPhoto,
   removePhoto,
   refundOrder,
+  processOrderPayment,
   requestDueDateChange,
   updateOrderPullList,
 } from './order.controller';
@@ -41,6 +42,7 @@ router.patch(
   updateOrderPullList
 );
 router.post('/:id/refund', authorizeRoles('Admin', 'Sign company', 'Office Manager'), refundOrder);
+router.post('/:id/process-payment', authorizeRoles('Admin', 'Sign company', 'Office Manager'), processOrderPayment);
 router.post(
   '/:id/photo',
   authorizeRoles('Admin', 'Sign company', 'Installer', 'Photographer', 'Warehouse manager', 'Office Manager'),

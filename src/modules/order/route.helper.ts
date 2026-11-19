@@ -12,6 +12,10 @@ export interface RouteWaypoint {
   installerEmail?: string;
   lat: number;
   lng: number;
+  /** true when the pin could not be geocoded and is placed by city/area estimate */
+  approximate?: boolean;
+  /** how exactly the address was matched: address | street | area */
+  geoPrecision?: string;
   legDistanceKm: number;
   details: string;
 }
@@ -39,9 +43,13 @@ function hashOffset(seed: string): [number, number] {
   return [latOff, lngOff];
 }
 
-export function resolveCoordinates(address: string, seed: string, specs?: any): { lat: number; lng: number } {
+export function resolveCoordinates(
+  address: string,
+  seed: string,
+  specs?: any
+): { lat: number; lng: number; approximate?: boolean; geoPrecision?: string } {
   if (typeof specs?.lat === 'number' && typeof specs?.lng === 'number') {
-    return { lat: specs.lat, lng: specs.lng };
+    return { lat: specs.lat, lng: specs.lng, geoPrecision: specs.geoPrecision || 'address', approximate: specs.geoPrecision === 'area' };
   }
   const clean = `${address || ''} ${seed || ''}`;
   const anchor = CITY_ANCHORS.find((a) => a.match.test(clean)) || { lat: 32.7767, lng: -96.797 };
@@ -49,6 +57,7 @@ export function resolveCoordinates(address: string, seed: string, specs?: any): 
   return {
     lat: Number((anchor.lat + dLat).toFixed(5)),
     lng: Number((anchor.lng + dLng).toFixed(5)),
+    approximate: true,
   };
 }
 
@@ -84,7 +93,7 @@ export function optimizeRouteWaypoints(params: {
   };
   const endWh = warehouses.length > 1 ? warehouses[0] : primaryWh;
 
-  const startCoord = resolveCoordinates(primaryWh.location || primaryWh.name, `wh-${primaryWh._id}`);
+  const startCoord = resolveCoordinates(primaryWh.location || primaryWh.name, `wh-${primaryWh._id}`, primaryWh);
   const endCoord = startCoord;
 
   const stopCandidates = orders.map((o: any) => {
@@ -104,6 +113,8 @@ export function optimizeRouteWaypoints(params: {
       installerEmail: o.installerEmail || '',
       lat: coord.lat,
       lng: coord.lng,
+      approximate: !!coord.approximate,
+      geoPrecision: coord.geoPrecision || (coord.approximate ? 'estimated' : ''),
       isRush: String(o.dueDate || '').toLowerCase() === 'rush',
     };
   });
@@ -165,6 +176,8 @@ export function optimizeRouteWaypoints(params: {
       installerEmail: stop.installerEmail,
       lat: stop.lat,
       lng: stop.lng,
+      approximate: stop.approximate,
+      geoPrecision: stop.geoPrecision,
       legDistanceKm: leg,
       details: `Stop ${idx + 1} (${stop.orderNumber}) • ${leg} km`,
     });

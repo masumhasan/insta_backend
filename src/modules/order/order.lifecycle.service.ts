@@ -21,6 +21,48 @@ const parseMoney = (val: any): number => {
  * Handles secondary order workflows: refunds, due-date requests, pull-list intake, CSV migration, and revenue.
  */
 export class OrderLifecycleService {
+  /**
+   * Reprocess a failed/unpaid order (or release an order on HOLD) by charging the card on file.
+   * NOTE: live card charging (Stripe) is intentionally deferred — this records the payment as successful.
+   * Plug the payment gateway in at the marked line when it is integrated.
+   */
+  static async processPayment(id: string, currentUser?: any) {
+    const order = await findOrderOrThrow(id);
+    const unpaid = ['Unpaid', 'Failed', 'Pending'].includes(String(order.paymentStatus || ''));
+    const onHold = /^(on hold|waiting on payment)$/i.test(order.status);
+    if (!unpaid && !onHold) throw new AppError('This order has no outstanding payment to process.', 400);
+
+    // TODO(payments): charge the stored card here and throw AppError on a declined charge.
+    order.paymentStatus = 'Paid';
+    order.paymentMethod = 'credit_card';
+    order.specifications = {
+      ...(order.specifications || {}),
+      paymentProcessedAt: new Date().toISOString(),
+      paymentProcessedBy: currentUser?.name || 'Staff',
+    };
+    // Releasing a hold is handled by the Order pre-save hook (paymentStatus → Paid).
+    if (onHold && !unpaid) order.markModified('paymentStatus');
+    await order.save();
+
+    const { ClientInvoice } = await import('../invoice/invoice.model');
+    await ClientInvoice.updateOne({ orderId: order.orderNumber }, { $set: { payment: 'Paid' } }).catch(() => {});
+
+    await NotificationService.safeNotify({
+      recipientRole: 'Sign company',
+      title: `Payment Processed (${order.orderNumber})`,
+      message: `Payment for ${order.type} at ${order.address} was processed. Status: ${order.status}.`,
+      type: 'order',
+      referenceId: order.orderNumber,
+    });
+
+    return {
+      id: order.orderNumber,
+      _id: order._id.toString(),
+      paymentStatus: order.paymentStatus,
+      status: order.status,
+    };
+  }
+
   static async addRefund(
     id: string,
     payload: { type: 'full' | 'partial'; amount: number; reason?: string }

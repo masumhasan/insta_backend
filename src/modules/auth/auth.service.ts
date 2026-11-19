@@ -148,7 +148,7 @@ export class AuthService {
     return { message: 'Password has been reset successfully. You can now sign in.' };
   }
 
-  static async signUp(payload: { name: string; email: string; password: string; role?: any; company?: string; phone?: string }) {
+  static async signUp(payload: { name: string; email: string; password: string; role?: any; company?: string; phone?: string; howDidYouHear?: string }) {
     if (!payload.name?.trim() || !payload.email?.trim() || !payload.password || payload.password.length < 8) {
       throw new AppError('Name, valid email, and password (at least 8 characters) are required.', 400);
     }
@@ -164,6 +164,7 @@ export class AuthService {
       role: safeRole,
       company: payload.company || 'Instapost',
       phone: payload.phone || '',
+      howDidYouHear: String(payload.howDidYouHear || '').trim().slice(0, 200),
     });
 
     const accessToken = user.generateAccessToken();

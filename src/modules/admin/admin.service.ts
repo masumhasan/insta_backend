@@ -12,6 +12,16 @@ export interface IGetAdminsQuery {
   status?: string;
 }
 
+/** Keeps only `{ key: boolean }` pairs so arbitrary data can never be stored as permissions. */
+const sanitizePermissions = (input: unknown): Record<string, boolean> => {
+  if (!input || typeof input !== "object") return {};
+  const out: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (/^[a-z0-9.-]{1,80}$/i.test(key)) out[key] = value === true || value === "true";
+  }
+  return out;
+};
+
 export class AdminService {
   static async getAdmins(query: IGetAdminsQuery) {
     const page = Math.max(1, Number(query.page) || 1);
@@ -87,7 +97,7 @@ export class AdminService {
       staffRole: payload.staffRole || 'Admin',
       company: 'Instapost LLC',
       status: 'active',
-      permissions: payload.permissions || {},
+      permissions: sanitizePermissions(payload.permissions),
     });
 
     return {
@@ -109,7 +119,7 @@ export class AdminService {
     if (payload.phone !== undefined) user.phone = payload.phone;
     if (payload.staffRole !== undefined) user.staffRole = payload.staffRole;
     if (payload.status) user.status = payload.status;
-    if (payload.permissions) user.permissions = payload.permissions;
+    if (payload.permissions) user.permissions = sanitizePermissions(payload.permissions);
     if (payload.password) user.password = payload.password;
 
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields({

@@ -72,6 +72,7 @@ export class UserService {
       company: u.company || 'Instapost',
       office: u.office || '',
       brokerage: u.brokerage || u.crm?.brokerage || '',
+      howDidYouHear: u.howDidYouHear || '',
       staffRole: u.staffRole || '',
       parentAgentId: u.parentAgentId || '',
       paymentMethodPreference: u.paymentMethodPreference || '',

@@ -5,7 +5,7 @@ import { ApiResponse } from '../../utils/apiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
 
 export const getInventory = asyncHandler(async (req: Request, res: Response) => {
-  const data = await InventoryService.getInventory(req.query);
+  const data = await InventoryService.getInventory(req.query, (req as any).user);
   return ApiResponse.success(res, 200, 'Inventory items retrieved successfully', data);
 });
 
@@ -70,4 +70,15 @@ export const getInventoryLabelPdf = asyncHandler(async (req: Request, res: Respo
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(buffer);
+});
+
+export const generateInventoryUnits = asyncHandler(async (req: Request, res: Response) => {
+  const { count, addStock } = req.body || {};
+  const data = await InventoryService.generateUnits(String(req.params.id), Number(count), addStock === true || addStock === 'true');
+  return ApiResponse.success(res, 200, 'Unit barcodes generated successfully', data);
+});
+
+export const updateInventoryUnit = asyncHandler(async (req: Request, res: Response) => {
+  const data = await InventoryService.updateUnit(String(req.params.id), String(req.params.unit), req.body || {});
+  return ApiResponse.success(res, 200, 'Unit updated successfully', data);
 });

@@ -1,4 +1,5 @@
 import { Order } from './order.model';
+import { geocodeAddress } from '../geo/geocode.service';
 import { OrderMediaService, normalizePhotos } from './order.media.service';
 import { User } from '../auth/user.model';
 import { AppError } from '../../utils/apiError';
@@ -360,6 +361,17 @@ export class OrderService {
       }
     }
 
+    // Geocode the address up front (best effort, short timeout) so the stop can be pinned on the routing map.
+    let geoSpecs: Record<string, any> = {};
+    const incomingSpecs = payload.specifications || {};
+    if (typeof incomingSpecs.lat !== 'number' && (payload.address || '').trim()) {
+      const g = await Promise.race([
+        geocodeAddress(String(payload.address)),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+      ]).catch(() => null);
+      if (g) geoSpecs = { lat: g.lat, lng: g.lng, geoPrecision: g.precision, geoFor: String(payload.address) };
+    }
+
     const order = await Order.create({
       orderNumber,
       type: TYPE_ALIASES[payload.type] || payload.type || 'Installation',
@@ -387,7 +399,7 @@ export class OrderService {
       installerId: payload.installerId || '',
       photos: normalizePhotos(payload.photos || (payload.imageUrl ? [{ imageUrl: payload.imageUrl, publicId: payload.publicId || '' }] : [])),
       pullList,
-      specifications: payload.specifications || {},
+      specifications: { ...(payload.specifications || {}), ...geoSpecs },
     });
 
     if (order.type === 'Media Services' || payload.qcTasks?.length) {
@@ -431,7 +443,14 @@ export class OrderService {
       if (!payload.price) order.price = formatCurrencyPrice(undefined, order.totalAmount);
     }
     if (payload.price) order.price = formatCurrencyPrice(payload.price, order.totalAmount);
-    if (payload.address) order.address = payload.address;
+    if (payload.address) {
+      if (payload.address !== order.address && order.specifications) {
+        // The old pin no longer matches: drop coordinates so the next route plan re-geocodes the new address.
+        const { lat: _lat, lng: _lng, geoPrecision: _gp, geoFor: _gf, ...rest } = order.specifications as any;
+        order.specifications = rest;
+      }
+      order.address = payload.address;
+    }
     if (payload.agent) order.agent = payload.agent;
     if (payload.paymentStatus) order.paymentStatus = payload.paymentStatus;
     if (payload.paymentMethod) order.paymentMethod = payload.paymentMethod;
@@ -460,14 +479,29 @@ export class OrderService {
     return formatOrder(order.toObject());
   }
 
-  static async assignInstaller(id: string, installer: { name: string; email: string; id?: string }) {
+  static async assignInstaller(
+    id: string,
+    installer: { name: string; email: string; id?: string; unassign?: boolean }
+  ) {
     const order = await Order.findOne({
       $or: [{ _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }, { orderNumber: id }],
     });
     if (!order) throw new AppError('Order not found.', 404);
 
+    // Unassign: clear the technician and put the job back in the pending queue to be worked later.
+    if (installer.unassign || !String(installer.name || '').trim()) {
+      order.installerName = '';
+      order.installerEmail = '';
+      order.installerId = '';
+      if (/^assigned/i.test(order.status)) {
+        order.status = order.status.includes('Up') ? 'Pending Up' : order.status.includes('Down') ? 'Pending Down' : 'Pending';
+      }
+      await order.save();
+      return { id: order.orderNumber, status: order.status, installerName: '' };
+    }
+
     order.installerName = installer.name;
-    order.installerEmail = installer.email.toLowerCase();
+    order.installerEmail = String(installer.email || '').toLowerCase();
     order.installerId = installer.id || '';
 
     if (order.status.includes('Up')) {

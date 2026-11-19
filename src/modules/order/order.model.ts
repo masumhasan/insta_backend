@@ -138,6 +138,25 @@ const orderSchema = new Schema<IOrderDocument>(
 orderSchema.pre('save', async function (next) {
   try {
     if (this.isNew) return next();
+
+    // Automatic status progression (an explicit status change always wins).
+    if (!this.isModified('status')) {
+      const cur = String(this.status || '');
+      const suffix = /^removal$/i.test(this.type) ? ' Down' : /^(media services|other services)$/i.test(this.type) ? '' : ' Up';
+      const hasInstaller = !!String(this.installerName || '').trim();
+      const hasSchedule = !!String(this.appointmentTime || '').trim();
+      const isHold = /^(on hold|waiting on payment)$/i.test(cur);
+      const isEarly = /^(pending|scheduled)/i.test(cur);
+      if (isHold && this.isModified('paymentStatus') && this.paymentStatus === 'Paid') {
+        // Payment processed → release the hold into the right stage of the pipeline.
+        this.status = hasInstaller ? `Assigned${suffix}` : hasSchedule ? `Scheduled${suffix}` : `Pending${suffix}`;
+      } else if (isEarly && this.isModified('installerName') && hasInstaller) {
+        this.status = `Assigned${suffix}`;
+      } else if (/^pending/i.test(cur) && this.isModified('appointmentTime') && hasSchedule) {
+        this.status = `Scheduled${suffix}`;
+      }
+    }
+
     const statusChanged = this.isModified('status');
     const dateChanged = this.isModified('dueDate') || this.isModified('appointmentTime');
     if (!statusChanged && !dateChanged) return next();

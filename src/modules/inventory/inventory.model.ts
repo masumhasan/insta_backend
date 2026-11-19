@@ -10,6 +10,14 @@ export interface IInventoryHistoryEntry {
   notes?: string;
 }
 
+export interface IInventoryUnit {
+  unitId: string;
+  barcode: string;
+  status: string;
+  notes?: string;
+  updatedAt?: string;
+}
+
 export interface IInventoryDocument extends Document {
   product: string;
   itemType?: string;
@@ -17,6 +25,12 @@ export interface IInventoryDocument extends Document {
   owner: string;
   assignedAgent?: string;
   assignedAgentId?: mongoose.Types.ObjectId | string;
+  itemId?: string;
+  ownerType?: "Agent" | "Office" | "Sign company";
+  ownerId?: string;
+  postType?: string;
+  ownerLinkChecked?: boolean;
+  units?: IInventoryUnit[];
   office?: string;
   barcode?: string;
   available: number;
@@ -30,6 +44,9 @@ export interface IInventoryDocument extends Document {
   serialNo?: string;
   shelveNo?: string;
   unitPrice?: string;
+  rentalPrice?: string;
+  removalPrice?: string;
+  installPrice?: string;
   shipment?: string;
   replacementCost?: string;
   enableReplacementBilling?: boolean;
@@ -73,6 +90,9 @@ const inventorySchema = new Schema<IInventoryDocument>(
     serialNo: { type: String, default: '' },
     shelveNo: { type: String, default: '' },
     unitPrice: { type: String, default: '$100.00' },
+    rentalPrice: { type: String, default: '' },
+    removalPrice: { type: String, default: '' },
+    installPrice: { type: String, default: '' },
     shipment: { type: String, default: '' },
     replacementCost: { type: String, default: '75.00' },
     enableReplacementBilling: { type: Boolean, default: true },
@@ -89,6 +109,21 @@ const inventorySchema = new Schema<IInventoryDocument>(
     additionalSpecs: { type: String, default: '' },
     notes: { type: String, default: '' },
     allowCustomization: { type: Boolean, default: false },
+    itemId: { type: String, index: true, sparse: true, unique: true },
+    ownerType: { type: String, enum: ['Agent', 'Office', 'Sign company'], default: 'Sign company' },
+    ownerId: { type: String, default: '', index: true },
+    postType: { type: String, default: '' },
+    ownerLinkChecked: { type: Boolean, default: false },
+    units: [
+      {
+        unitId: { type: String },
+        barcode: { type: String, index: true },
+        status: { type: String, default: 'Available' },
+        notes: { type: String, default: '' },
+        updatedAt: { type: String, default: '' },
+        _id: false,
+      },
+    ],
     lastUpdated: { type: String, default: '' },
     history: [
       {

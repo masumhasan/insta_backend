@@ -18,6 +18,8 @@ import { uploadRoutes } from './modules/upload/upload.routes';
 import { notificationRoutes } from './modules/notification/notification.routes';
 import { opsRoutes } from './modules/ops/ops.routes';
 import { invoiceRoutes } from './modules/invoice/invoice.routes';
+import { favoriteRoutes } from './modules/favorite/favorite.routes';
+import { geoRoutes } from './modules/geo/geo.routes';
 
 const app: Application = express();
 
@@ -114,6 +116,12 @@ app.use('/api/v1/ops', opsRoutes);
 // Invoices Routes (Client & Technician Invoices)
 app.use('/invoices', invoiceRoutes);
 app.use('/api/v1/invoices', invoiceRoutes);
+
+// Favorite sign layouts // Centralized error and 404 handlers address lookup
+app.use('/favorites', favoriteRoutes);
+app.use('/api/v1/favorites', favoriteRoutes);
+app.use('/geo', geoRoutes);
+app.use('/api/v1/geo', geoRoutes);
 
 // Centralized error and 404 handlers
 app.use(notFoundHandler);

@@ -27,6 +27,7 @@ export interface IUserDocument extends Document {
   company?: string;
   office?: string;
   brokerage?: string;
+  howDidYouHear?: string;
   imageUrl?: string;
   publicId?: string;
   staffRole?: string;
@@ -81,6 +82,7 @@ const userSchema = new Schema<IUserDocument>(
     company: { type: String, default: 'Instapost' },
     office: { type: String, default: '' },
     brokerage: { type: String, default: '' },
+    howDidYouHear: { type: String, default: '', trim: true },
     imageUrl: { type: String, default: '' },
     publicId: { type: String, default: '' },
     staffRole: { type: String, default: '' },

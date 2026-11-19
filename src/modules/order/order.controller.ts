@@ -43,13 +43,19 @@ export const updateOrder = asyncHandler(async (req: Request, res: Response) => {
 
 export const assignInstaller = asyncHandler(async (req: Request, res: Response) => {
   const id = req.params.id as string;
-  const { installerName, installerEmail, installerId } = req.body;
+  const { installerName, installerEmail, installerId, unassign } = req.body;
   const result = await OrderService.assignInstaller(id, {
     name: installerName,
     email: installerEmail,
     id: installerId,
+    unassign: unassign === true || unassign === 'true',
   });
-  return ApiResponse.success(res, 200, 'Installer assigned successfully', result);
+  return ApiResponse.success(
+    res,
+    200,
+    unassign === true || unassign === 'true' ? 'Installer unassigned successfully' : 'Installer assigned successfully',
+    result
+  );
 });
 
 export const addPhoto = asyncHandler(async (req: Request, res: Response) => {
@@ -73,6 +79,11 @@ export const removePhoto = asyncHandler(async (req: Request, res: Response) => {
   const imageUrl = (req.body?.imageUrl as string) || (req.query?.imageUrl as string);
   const result = await OrderService.removePhoto(id, { publicId, imageUrl });
   return ApiResponse.success(res, 200, 'Photo removed successfully', result);
+});
+
+export const processOrderPayment = asyncHandler(async (req: Request, res: Response) => {
+  const result = await OrderLifecycleService.processPayment(req.params.id as string, (req as any).user);
+  return ApiResponse.success(res, 200, 'Payment processed successfully', result);
 });
 
 export const refundOrder = asyncHandler(async (req: Request, res: Response) => {

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { authenticate } from '../../middlewares/auth.middleware';
 import {
   getWarehouses,
   createWarehouse,
@@ -20,6 +21,7 @@ import {
   createServiceItem,
   updateServiceItem,
   deleteServiceItem,
+  getActiveAnnouncements,
 } from './catalog.controller';
 
 const router = Router();
@@ -49,6 +51,8 @@ router.patch('/coupons/:id', updateCoupon);
 router.delete('/coupons/:id', deleteCoupon);
 
 // Service Items (Services, Sign Types, Sizes, Delivery Methods, Options, etc.)
+// Announcements that are currently live for a portal (?portal=agent|assistant|team_lead|warehouse|installer|sign_company)
+router.get('/announcements/active', authenticate, getActiveAnnouncements);
 router.get('/items', getServiceItems);
 router.get('/items/:type', getServiceItems);
 router.post('/items', createServiceItem);

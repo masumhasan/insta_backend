@@ -22,7 +22,8 @@ export interface IServiceItemDocument extends Document {
     | 'task_builder'
     | 'terms_pricing'
     | 'academy'
-    | 'entry_method';
+    | 'entry_method'
+    | 'info_popup';
   name: string;
   category?: string;
   price: number;
@@ -61,6 +62,7 @@ const serviceItemSchema = new Schema<IServiceItemDocument>(
         'terms_pricing',
         'academy',
         'entry_method',
+        'info_popup',
       ],
       index: true,
     },

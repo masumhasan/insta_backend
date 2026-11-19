@@ -2,6 +2,7 @@ import { Order } from './order.model';
 import { Warehouse } from '../catalog/warehouse.model';
 import { User } from '../auth/user.model';
 import { optimizeRouteWaypoints, attachRoadGeometry } from './route.helper';
+import { geocodeAddress, mapWithConcurrency } from '../geo/geocode.service';
 import { AppError } from '../../utils/apiError';
 import { assertNoBase64 } from '../../utils/imageGuard';
 import { CloudinaryService } from '../../utils/cloudinary.service';
@@ -102,6 +103,32 @@ export class OrderMediaService {
           ...warehouses.filter((w: any) => w._id.toString() !== query.warehouseId),
         ]
       : warehouses;
+
+    // Pin every stop at its real location: geocode addresses that have no saved coordinates (once, then stored).
+    const needsGeo = orders.filter((o: any) => {
+      const sp = o.specifications || {};
+      const hasCoords = typeof sp.lat === 'number' && typeof sp.lng === 'number';
+      return o.address && (!hasCoords || (sp.geoFor && sp.geoFor !== o.address));
+    });
+    await mapWithConcurrency(needsGeo.slice(0, 40), 3, async (o: any) => {
+      const g = await geocodeAddress(o.address);
+      if (!g) return;
+      const sp = { ...(o.specifications || {}), lat: g.lat, lng: g.lng, geoPrecision: g.precision, geoFor: o.address };
+      o.specifications = sp;
+      await Order.updateOne({ _id: o._id }, { $set: { 'specifications.lat': g.lat, 'specifications.lng': g.lng, 'specifications.geoPrecision': g.precision, 'specifications.geoFor': o.address } });
+    });
+    await mapWithConcurrency(
+      warehouses.filter((w: any) => w.location && (typeof w.lat !== 'number' || w.geoFor !== w.location)).slice(0, 5),
+      2,
+      async (w: any) => {
+        const g = await geocodeAddress(w.location);
+        if (!g) return;
+        w.lat = g.lat;
+        w.lng = g.lng;
+        w.geoFor = w.location;
+        await Warehouse.updateOne({ _id: w._id }, { $set: { lat: g.lat, lng: g.lng, geoFor: w.location } });
+      }
+    );
 
     const basePlan = optimizeRouteWaypoints({
       warehouses: orderedWarehouses,
