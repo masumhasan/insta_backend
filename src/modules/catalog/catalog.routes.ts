@@ -1,5 +1,6 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate } from '../../middlewares/auth.middleware';
+import { authorizeRoles, STAFF_ROLES } from '../../middlewares/roleGuard.middleware';
 import {
   getWarehouses,
   createWarehouse,
@@ -23,40 +24,47 @@ import {
   deleteServiceItem,
   getActiveAnnouncements,
 } from './catalog.controller';
-
 const router = Router();
+
+const staffOnly = authorizeRoles(...STAFF_ROLES);
+const warehouseWriters = authorizeRoles(...STAFF_ROLES, 'Warehouse manager');
+
+// The public site reads the FAQ without signing in; every other catalog route needs a signed-in user.
+const publicFaqOnly = (req: Request, res: Response, next: NextFunction) =>
+  (req.params.type || req.query.type) === 'faq' ? next() : authenticate(req, res, next);
+router.get('/items', publicFaqOnly, getServiceItems);
+router.get('/items/:type', publicFaqOnly, getServiceItems);
+router.use(authenticate);
 
 // Warehouses
 router.get('/warehouses', getWarehouses);
-router.post('/warehouses', createWarehouse);
-router.patch('/warehouses/:id', updateWarehouse);
-router.delete('/warehouses/:id', deleteWarehouse);
+router.post('/warehouses', warehouseWriters, createWarehouse);
+router.patch('/warehouses/:id', warehouseWriters, updateWarehouse);
+router.delete('/warehouses/:id', staffOnly, deleteWarehouse);
 
 // Materials
 router.get('/materials', getMaterials);
-router.post('/materials', createMaterial);
-router.patch('/materials/:id', updateMaterial);
-router.delete('/materials/:id', deleteMaterial);
+router.post('/materials', warehouseWriters, createMaterial);
+router.patch('/materials/:id', warehouseWriters, updateMaterial);
+router.delete('/materials/:id', staffOnly, deleteMaterial);
 
 // Packages
 router.get('/packages', getPackages);
-router.post('/packages', createPackage);
-router.patch('/packages/:id', updatePackage);
-router.delete('/packages/:id', deletePackage);
+router.post('/packages', staffOnly, createPackage);
+router.patch('/packages/:id', staffOnly, updatePackage);
+router.delete('/packages/:id', staffOnly, deletePackage);
 
 // Coupons
 router.get('/coupons', getCoupons);
-router.post('/coupons', createCoupon);
-router.patch('/coupons/:id', updateCoupon);
-router.delete('/coupons/:id', deleteCoupon);
+router.post('/coupons', staffOnly, createCoupon);
+router.patch('/coupons/:id', staffOnly, updateCoupon);
+router.delete('/coupons/:id', staffOnly, deleteCoupon);
 
 // Service Items (Services, Sign Types, Sizes, Delivery Methods, Options, etc.)
 // Announcements that are currently live for a portal (?portal=agent|assistant|team_lead|warehouse|installer|sign_company)
-router.get('/announcements/active', authenticate, getActiveAnnouncements);
-router.get('/items', getServiceItems);
-router.get('/items/:type', getServiceItems);
-router.post('/items', createServiceItem);
-router.patch('/items/:id', updateServiceItem);
-router.delete('/items/:id', deleteServiceItem);
+router.get('/announcements/active', getActiveAnnouncements);
+router.post('/items', staffOnly, createServiceItem);
+router.patch('/items/:id', staffOnly, updateServiceItem);
+router.delete('/items/:id', staffOnly, deleteServiceItem);
 
 export const catalogRoutes = router;

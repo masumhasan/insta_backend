@@ -14,6 +14,7 @@ import {
   processOrderPayment,
   requestDueDateChange,
   updateOrderPullList,
+  getPricing,
 } from './order.controller';
 import { uploadImage } from '../../middlewares/upload.middleware';
 import { authenticate } from '../../middlewares/auth.middleware';
@@ -25,6 +26,7 @@ router.use(authenticate);
 
 router.get('/', getOrders);
 router.get('/route-plan', getRoutePlan);
+router.get('/pricing', getPricing);
 router.get('/revenue', authorizeRoles('Admin', 'Sign company', 'Office Manager'), getRevenue);
 router.post('/import-csv', authorizeRoles('Admin', 'Sign company', 'Office Manager'), importCsvOrders);
 router.post('/', createOrder);

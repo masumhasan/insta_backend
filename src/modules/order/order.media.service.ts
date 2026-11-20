@@ -108,25 +108,43 @@ export class OrderMediaService {
     const needsGeo = orders.filter((o: any) => {
       const sp = o.specifications || {};
       const hasCoords = typeof sp.lat === 'number' && typeof sp.lng === 'number';
-      return o.address && (!hasCoords || (sp.geoFor && sp.geoFor !== o.address));
+      // geoFor === address means "already looked up" (even when nothing was found), so bad addresses are not retried on every load.
+      return o.address && sp.geoFor !== o.address && !(hasCoords && !sp.geoFor);
     });
-    await mapWithConcurrency(needsGeo.slice(0, 40), 3, async (o: any) => {
-      const g = await geocodeAddress(o.address);
-      if (!g) return;
-      const sp = { ...(o.specifications || {}), lat: g.lat, lng: g.lng, geoPrecision: g.precision, geoFor: o.address };
-      o.specifications = sp;
-      await Order.updateOne({ _id: o._id }, { $set: { 'specifications.lat': g.lat, 'specifications.lng': g.lng, 'specifications.geoPrecision': g.precision, 'specifications.geoFor': o.address } });
+    await mapWithConcurrency(needsGeo.slice(0, 10), 3, async (o: any) => {
+      let g;
+      try {
+        g = await geocodeAddress(o.address);
+      } catch {
+        return; // provider down: leave unmarked so the next load retries
+      }
+      const { lat: _lat, lng: _lng, geoPrecision: _gp, ...rest } = o.specifications || {};
+      if (g) {
+        o.specifications = { ...rest, lat: g.lat, lng: g.lng, geoPrecision: g.precision, geoFor: o.address };
+        await Order.updateOne({ _id: o._id }, { $set: { 'specifications.lat': g.lat, 'specifications.lng': g.lng, 'specifications.geoPrecision': g.precision, 'specifications.geoFor': o.address } });
+      } else {
+        // Genuine miss: mark it and drop any stale pin so the route falls back to the area estimate.
+        o.specifications = { ...rest, geoFor: o.address };
+        await Order.updateOne({ _id: o._id }, { $set: { 'specifications.geoFor': o.address }, $unset: { 'specifications.lat': '', 'specifications.lng': '', 'specifications.geoPrecision': '' } });
+      }
     });
     await mapWithConcurrency(
-      warehouses.filter((w: any) => w.location && (typeof w.lat !== 'number' || w.geoFor !== w.location)).slice(0, 5),
+      warehouses.filter((w: any) => w.location && w.geoFor !== w.location).slice(0, 5),
       2,
       async (w: any) => {
-        const g = await geocodeAddress(w.location);
-        if (!g) return;
-        w.lat = g.lat;
-        w.lng = g.lng;
+        let g;
+        try {
+          g = await geocodeAddress(w.location);
+        } catch {
+          return;
+        }
+        w.lat = g?.lat;
+        w.lng = g?.lng;
         w.geoFor = w.location;
-        await Warehouse.updateOne({ _id: w._id }, { $set: { lat: g.lat, lng: g.lng, geoFor: w.location } });
+        await Warehouse.updateOne(
+          { _id: w._id },
+          g ? { $set: { lat: g.lat, lng: g.lng, geoFor: w.location } } : { $set: { geoFor: w.location }, $unset: { lat: '', lng: '' } }
+        );
       }
     );
 

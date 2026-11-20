@@ -3,6 +3,7 @@ import { Order } from '../order/order.model';
 import { NotificationService } from '../notification/notification.service';
 import { AppError } from '../../utils/apiError';
 import { buildInvoicePdfBuffer, type IPdfLine } from './invoice.pdf';
+import { Counter, nextSequence } from '../inventory/counter.model';
 
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
 
@@ -13,6 +14,24 @@ const findClientInvoiceOrThrow = async (id: string) => {
   const doc = await ClientInvoice.findOne({ $or: clauses });
   if (!doc) throw new AppError('Client invoice not found.', 404);
   return doc;
+};
+
+/** Agents, Team Leads and Assistants only see their own invoices. */
+const assertInvoiceVisible = (doc: any, user?: any) => {
+  if (!user || !['Agent', 'Team Lead', 'Assistant'].includes(user.role)) return;
+  const mine = (doc.clientEmail && doc.clientEmail === String(user.email || '').toLowerCase()) || doc.clientName === user.name;
+  if (!mine) throw new AppError('Access forbidden for this invoice.', 403);
+};
+
+/** Next free INV-#### number. The counter is lifted to the highest existing number first, so it never collides. */
+const nextInvoiceNo = async () => {
+  const [top] = await ClientInvoice.aggregate([
+    { $match: { invoiceNo: /^INV-\d+$/ } },
+    { $project: { n: { $toInt: { $substrBytes: ['$invoiceNo', 4, 20] } } } },
+    { $group: { _id: null, max: { $max: '$n' } } },
+  ]);
+  await Counter.updateOne({ _id: 'client-invoice' }, { $max: { seq: Math.max(7510, top?.max || 0) } }, { upsert: true });
+  return `INV-${await nextSequence('client-invoice')}`;
 };
 
 export const formatClientInvoice = (doc: any) => ({
@@ -78,14 +97,14 @@ export class ClientInvoiceService {
     };
   }
 
-  static async getInvoiceById(id: string) {
+  static async getInvoiceById(id: string, user?: any) {
     const doc = await findClientInvoiceOrThrow(id);
+    assertInvoiceVisible(doc, user);
     return formatClientInvoice(doc.toObject());
   }
 
   static async createInvoice(payload: any) {
-    const count = await ClientInvoice.countDocuments();
-    const invoiceNo = payload.invoiceNo || `INV-${7511 + count + Math.floor(Math.random() * 50)}`;
+    const invoiceNo = payload.invoiceNo || (await nextInvoiceNo());
     const price = Number(payload.price) || 0;
     const lineItems = Array.isArray(payload.lineItems) && payload.lineItems.length > 0
       ? payload.lineItems
@@ -215,8 +234,9 @@ export class ClientInvoiceService {
     return formatClientInvoice(doc.toObject());
   }
 
-  static async generatePdf(id: string): Promise<{ filename: string; buffer: Buffer }> {
+  static async generatePdf(id: string, user?: any): Promise<{ filename: string; buffer: Buffer }> {
     const doc = await findClientInvoiceOrThrow(id);
+    assertInvoiceVisible(doc, user);
     const inv: IClientInvoiceDocument = doc;
     const refundedTotal = (inv.refunds || []).reduce((s, r) => s + (Number(r.amount) || 0), 0);
 

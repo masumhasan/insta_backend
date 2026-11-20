@@ -10,7 +10,7 @@ export const getClientInvoices = asyncHandler(async (req: Request, res: Response
 });
 
 export const getClientInvoiceById = asyncHandler(async (req: Request, res: Response) => {
-  const data = await ClientInvoiceService.getInvoiceById(String(req.params.id));
+  const data = await ClientInvoiceService.getInvoiceById(String(req.params.id), (req as any).user);
   ApiResponse.success(res, 200, 'Client invoice retrieved successfully', data);
 });
 
@@ -30,7 +30,7 @@ export const refundClientInvoice = asyncHandler(async (req: Request, res: Respon
 });
 
 export const downloadClientInvoicePdf = asyncHandler(async (req: Request, res: Response) => {
-  const { filename, buffer } = await ClientInvoiceService.generatePdf(String(req.params.id));
+  const { filename, buffer } = await ClientInvoiceService.generatePdf(String(req.params.id), (req as any).user);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(buffer);

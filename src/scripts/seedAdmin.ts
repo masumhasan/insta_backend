@@ -5,6 +5,7 @@ import { config } from '../config/env';
 async function seedAdmin() {
   await connectDatabase();
 
+  if (!config.admin.email || !config.admin.password) throw new Error('Set ADMIN_EMAIL and ADMIN_PASSWORD in backend/.env.');
   const adminEmail = config.admin.email.toLowerCase();
   const existing = await User.findOne({ email: adminEmail });
 

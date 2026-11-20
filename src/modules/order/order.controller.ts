@@ -1,3 +1,4 @@
+import { getPricingConfig } from './order.pricing';
 import { Request, Response } from 'express';
 import { OrderService } from './order.service';
 import { OrderLifecycleService } from './order.lifecycle.service';
@@ -106,4 +107,8 @@ export const requestDueDateChange = asyncHandler(async (req: Request, res: Respo
 export const updateOrderPullList = asyncHandler(async (req: Request, res: Response) => {
   const result = await OrderLifecycleService.updatePullList(req.params.id as string, req.body);
   return ApiResponse.success(res, 200, 'Pull list updated successfully', result);
+});
+
+export const getPricing = asyncHandler(async (_req: Request, res: Response) => {
+  return ApiResponse.success(res, 200, 'Pricing settings', await getPricingConfig());
 });

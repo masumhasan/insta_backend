@@ -1,7 +1,9 @@
 import { connectDatabase, disconnectDatabase } from '../config/database';
 import { User, UserRole } from '../modules/auth/user.model';
 
-export const DEMO_PASSWORD = 'User@123456';
+// Seed accounts get this password. Set SEED_DEMO_PASSWORD in backend/.env; it is never committed.
+export const DEMO_PASSWORD = process.env.SEED_DEMO_PASSWORD || '';
+if (!DEMO_PASSWORD) throw new Error('Set SEED_DEMO_PASSWORD in backend/.env before running the user seeds.');
 
 interface DemoAccountSeed {
   name: string;

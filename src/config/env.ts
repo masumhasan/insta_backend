@@ -3,17 +3,21 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+/** Secrets must come from the environment (.env locally, Vercel env in production). Never commit fallbacks. */
+const required = (name: string): string => {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required environment variable ${name}. Set it in backend/.env or the Vercel project settings.`);
+  return value;
+};
+
 export const config = {
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '5000', 10),
-  mongodbUri:
-    process.env.MONGODB_URI ||
-    'mongodb+srv://tssstagpt_db_user:cuXpzBVmGoZYaAz1@instapost.crx2kfi.mongodb.net/instapost?retryWrites=true&w=majority',
+  mongodbUri: required('MONGODB_URI'),
   jwt: {
-    secret: process.env.JWT_TOKEN || 'instapost_jwt_secret_dev_key_2026_super_secure_token',
+    secret: required('JWT_TOKEN'),
     expiresIn: process.env.JWT_TOKEN_EXPIRY || '7d',
-    refreshSecret:
-      process.env.JWT_REFRESH_TOKEN || 'instapost_jwt_refresh_secret_key_2026_super_secure',
+    refreshSecret: required('JWT_REFRESH_TOKEN'),
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRY || '30d',
   },
   cloudinary: {
@@ -22,12 +26,11 @@ export const config = {
     apiSecret: process.env.CLOUDINARY_API_SECRET || '',
   },
   smtp: {
-    email: process.env.OTP_EMAIL || 'mail.sparktechai@gmail.com',
-    password: process.env.OTP_APP_PASSWORD || 'xqpf hjfp kvdl mmrp',
+    email: process.env.OTP_EMAIL || '',
+    password: process.env.OTP_APP_PASSWORD || '',
   },
   admin: {
-    email: process.env.ADMIN_EMAIL || 'mail.sparktechai@gmail.com',
-    password: process.env.ADMIN_PASSWORD || 'Test@123',
+    email: process.env.ADMIN_EMAIL || '',
+    password: process.env.ADMIN_PASSWORD || '',
   },
 };
-

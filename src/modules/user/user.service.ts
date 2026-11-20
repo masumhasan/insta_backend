@@ -3,6 +3,9 @@ import { AppError } from '../../utils/apiError';
 import { extractImageFields, cleanupReplacedAsset } from '../../utils/imageGuard';
 import { CloudinaryService } from '../../utils/cloudinary.service';
 import { NotificationService } from '../notification/notification.service';
+import { randomBytes } from 'crypto';
+import { assertCanList, assertCanManage, isSelf } from './user.policy';
+import { isStaff } from '../../middlewares/roleGuard.middleware';
 
 export interface IGetUsersQuery {
   role?: string;
@@ -14,7 +17,9 @@ export interface IGetUsersQuery {
 }
 
 export class UserService {
-  static async getUsers(query: IGetUsersQuery) {
+  static async getUsers(rawQuery: IGetUsersQuery, actor?: any) {
+    const query = { ...rawQuery };
+    assertCanList(actor, query);
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Number(query.limit) || 10);
     const skip = (page - 1) * limit;
@@ -122,7 +127,7 @@ export class UserService {
     staffRole?: string;
     parentAgentId?: string;
     paymentMethodPreference?: 'credit_card' | 'invoice_later' | '';
-  }) {
+  }, actor?: any) {
     const resolvedName = String(payload.name || payload.fullName || '').trim();
     if (!resolvedName) {
       throw new AppError('Path `name` is required.', 400);
@@ -139,9 +144,14 @@ export class UserService {
 
     const rawRole = String(payload.role || 'Agent').trim().toLowerCase();
     const canonicalRole = USER_ROLES.find((r) => r.toLowerCase() === rawRole) || 'Agent';
+    // Agents can only create their own assistants; everything else follows the policy table.
+    const parentAgentId = actor?.role === 'Agent' ? String(actor._id) : payload.parentAgentId || '';
+    assertCanManage(actor, canonicalRole, parentAgentId, 'create');
 
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields(payload);
-    const tempPassword = payload.password || 'Insta@123456';
+    if (payload.password && payload.password.length < 8) throw new AppError('Password must be at least 8 characters long.', 400);
+    const generated = payload.password ? '' : randomBytes(9).toString('base64url');
+    const tempPassword = payload.password || generated;
     const user = await User.create({
       name: resolvedName,
       email: resolvedEmail,
@@ -153,7 +163,7 @@ export class UserService {
       office: payload.office || '',
       brokerage: payload.brokerage || '',
       staffRole: payload.staffRole || '',
-      parentAgentId: payload.parentAgentId || '',
+      parentAgentId,
       paymentMethodPreference: payload.paymentMethodPreference || '',
       imageUrl: hasImageUpdate ? imageUrl : '',
       publicId: hasImageUpdate ? publicId : '',
@@ -170,12 +180,27 @@ export class UserService {
       company: user.company,
       imageUrl: user.imageUrl || '',
       publicId: user.publicId || '',
+      // Shown once so the creator can hand it over (email delivery is deferred).
+      ...(generated ? { temporaryPassword: generated } : {}),
     };
   }
 
-  static async updateUser(id: string, payload: any) {
+  static async updateUser(id: string, rawPayload: any, actor?: any) {
     const user = await User.findById(id);
     if (!user) throw new AppError('User not found.', 404);
+    const payload = { ...rawPayload };
+    const self = isSelf(actor, id);
+    if (!self || isStaff(actor)) assertCanManage(actor, user.role, user.parentAgentId, 'edit');
+    if (!isStaff(actor)) {
+      // Managers and the user themselves cannot change identity, ownership or CRM/approval fields.
+      for (const k of ['role', 'parentAgentId', 'company', 'staffRole', 'teamLeadApplication', 'crm', 'paymentMethodPreference']) delete payload[k];
+      if (self || !['active', 'blocked'].includes(payload.status)) delete payload.status;
+    }
+    if (payload.role) {
+      const nextRole = USER_ROLES.find((r) => r === payload.role);
+      if (!nextRole) throw new AppError('Unknown role.', 400);
+      assertCanManage(actor, nextRole, user.parentAgentId, 'assign');
+    }
 
     if (payload.name || payload.fullName) user.name = String(payload.name || payload.fullName).trim();
     if (payload.phone !== undefined) user.phone = payload.phone;
@@ -250,9 +275,11 @@ export class UserService {
     };
   }
 
-  static async deleteUser(id: string) {
+  static async deleteUser(id: string, actor?: any) {
     const user = await User.findById(id);
     if (!user) throw new AppError('User not found.', 404);
+    if (isSelf(actor, id)) throw new AppError('You cannot delete your own account.', 400);
+    assertCanManage(actor, user.role, user.parentAgentId, 'delete');
     if (user.publicId) {
       await CloudinaryService.deleteAsset(user.publicId);
     }
@@ -320,7 +347,7 @@ export class UserService {
     return user.teamLeadApplication;
   }
 
-  static async addCrmNote(id: string, payload: { text: string; author?: string; initials?: string }) {
+  static async addCrmNote(id: string, payload: { text: string; author?: string; initials?: string }, actor?: any) {
     const user = await User.findById(id);
     if (!user) throw new AppError('User not found.', 404);
     const text = String(payload.text || '').trim();
@@ -328,7 +355,7 @@ export class UserService {
 
     const now = new Date();
     const formattedDate = `${now.toLocaleString('default', { month: 'short' })} ${now.getDate()}, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    const author = payload.author || 'Current User';
+    const author = actor?.name || payload.author || 'Current User';
     const initials = payload.initials || author.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() || 'CU';
 
     const entry = {

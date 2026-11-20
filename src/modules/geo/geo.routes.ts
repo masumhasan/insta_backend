@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { authenticate } from '../../middlewares/auth.middleware';
 import { ApiResponse } from '../../utils/apiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
+import { photonSearch } from './geocode.service';
 
 const router = Router();
 router.use(authenticate);
@@ -45,16 +46,12 @@ router.get(
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < TTL) return ApiResponse.success(res, 200, 'Suggestions', hit.data);
 
-    let data: Suggestion[] = [];
+    let data: Suggestion[];
     try {
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6&lang=en&lat=32.78&lon=-96.8&bbox=-125,24,-66,50`;
-      const r = await fetch(url, { headers: { 'User-Agent': 'instapost-address-lookup' }, signal: AbortSignal.timeout(6000) });
-      if (r.ok) {
-        const json: any = await r.json();
-        data = (json.features || []).map(toSuggestion).filter(Boolean) as Suggestion[];
-      }
+      data = (await photonSearch(q, 6, '&lat=32.78&lon=-96.8')).map(toSuggestion).filter(Boolean) as Suggestion[];
     } catch {
-      data = [];
+      // Provider hiccup: answer empty but do not cache it.
+      return ApiResponse.success(res, 200, 'Suggestions', []);
     }
     if (cache.size > 500) cache.clear();
     cache.set(key, { at: Date.now(), data });

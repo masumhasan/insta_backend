@@ -4,6 +4,13 @@ import { OrderMediaService, normalizePhotos } from './order.media.service';
 import { User } from '../auth/user.model';
 import { AppError } from '../../utils/apiError';
 import { assertNoBase64 } from '../../utils/imageGuard';
+import { isStaff } from '../../middlewares/roleGuard.middleware';
+import { priceCustomerOrder } from './order.pricing';
+import { Coupon } from '../catalog/coupon.model';
+
+/** Money and payment fields: only staff may set or change them after an order exists. */
+const MONEY_FIELDS = ['totalAmount', 'price', 'subtotal', 'discountAmount', 'rushFee', 'taxAmount', 'paymentStatus', 'paymentMethod'];
+const REQUESTER_ROLES = ['Agent', 'Assistant', 'Team Lead'];
 
 export interface IGetOrdersQuery {
   type?: string;
@@ -334,12 +341,16 @@ export class OrderService {
     const hasExplicitTotal =
       payload.totalAmount !== undefined && payload.totalAmount !== '' && Number.isFinite(Number(payload.totalAmount));
     const parsedFromPrice = Number(String(payload.price || '').replace(/[^0-9.-]/g, ''));
-    const numericTotal = hasExplicitTotal
-      ? Number(payload.totalAmount)
-      : Number.isFinite(parsedFromPrice) && String(payload.price || '').trim() !== ''
-      ? parsedFromPrice
-      : 150;
-    const paymentMethod = payload.paymentMethod || 'credit_card';
+    const hasPrice = Number.isFinite(parsedFromPrice) && String(payload.price || '').trim() !== '';
+    const paymentMethod = payload.paymentMethod === 'invoice' ? 'invoice' : payload.paymentMethod || 'credit_card';
+    const staffOrder = isStaff(currentUser);
+    // Customer orders are priced on the server (fees, tax and coupon come from settings and the coupon table).
+    // Staff may enter a custom total, but it must still be present and valid.
+    const priced = staffOrder ? null : await priceCustomerOrder(payload, paymentMethod);
+    if (staffOrder && !hasExplicitTotal && !hasPrice) throw new AppError('Order total is required.', 400);
+    const numericTotal = priced ? priced.totalAmount : hasExplicitTotal ? Number(payload.totalAmount) : parsedFromPrice;
+    if (!(numericTotal >= 0)) throw new AppError('Order total must be zero or more.', 400);
+    if (!String(payload.address || '').trim()) throw new AppError('Address is required.', 400);
 
     let resolvedParentAgentId = payload.parentAgentId || currentUser?.parentAgentId || '';
     if (payload.agentId && !resolvedParentAgentId && /^[0-9a-fA-F]{24}$/.test(String(payload.agentId))) {
@@ -375,20 +386,21 @@ export class OrderService {
     const order = await Order.create({
       orderNumber,
       type: TYPE_ALIASES[payload.type] || payload.type || 'Installation',
-      address: payload.address || 'Dallas, TX',
+      address: String(payload.address).trim(),
       agent: resolvedAgentName,
       agentId: payload.agentId || currentUser?._id?.toString(),
       parentAgentId: resolvedParentAgentId,
       orderDate: payload.orderDate || new Date().toLocaleDateString('en-GB'),
       dueDate: payload.dueDate || 'Standard',
-      price: formatCurrencyPrice(payload.price, numericTotal),
+      price: formatCurrencyPrice(priced ? undefined : payload.price, numericTotal),
       totalAmount: numericTotal,
-      subtotal: payload.subtotal !== undefined ? Number(payload.subtotal) : numericTotal,
-      discountAmount: Number(payload.discountAmount) || 0,
-      rushFee: Number(payload.rushFee) || 0,
-      taxAmount: Number(payload.taxAmount) || 0,
+      subtotal: priced ? priced.subtotal : payload.subtotal !== undefined ? Number(payload.subtotal) : numericTotal,
+      discountAmount: priced ? priced.discountAmount : Number(payload.discountAmount) || 0,
+      rushFee: priced ? priced.rushFee : Number(payload.rushFee) || 0,
+      taxAmount: priced ? priced.taxAmount : Number(payload.taxAmount) || 0,
       paymentMethod,
-      paymentStatus: payload.paymentStatus || (paymentMethod === 'invoice' ? 'Unpaid' : 'Paid'),
+      // Customers cannot mark their own order paid: card orders are Paid (no processor yet, see CLAUDE.md), invoice orders stay Unpaid.
+      paymentStatus: (staffOrder && payload.paymentStatus) || (paymentMethod === 'invoice' ? 'Unpaid' : 'Paid'),
       poNumber: payload.poNumber || '',
       appointmentTime: payload.appointmentTime || '',
       onsiteDuration: Number(payload.onsiteDuration) || 60,
@@ -401,6 +413,10 @@ export class OrderService {
       pullList,
       specifications: { ...(payload.specifications || {}), ...geoSpecs },
     });
+
+    if (priced && priced.discountAmount > 0 && payload.couponCode) {
+      await Coupon.updateOne({ code: String(payload.couponCode).trim().toUpperCase() }, { $inc: { usageCount: 1 } });
+    }
 
     if (order.type === 'Media Services' || payload.qcTasks?.length) {
       const { OpsService } = await import('../ops/ops.service');
@@ -430,6 +446,16 @@ export class OrderService {
     if (!order) throw new AppError('Order not found.', 404);
     if (!(await isOrderVisibleToUser(order, currentUser))) {
       throw new AppError('Access forbidden for updating this order.', 403);
+    }
+
+    if (!isStaff(currentUser)) {
+      payload = { ...payload };
+      // Ignored (not rejected) so full-object edit forms keep working.
+      for (const k of MONEY_FIELDS) delete payload[k];
+      if (currentUser?.role !== 'Warehouse manager') for (const k of ['installerName', 'installerEmail', 'installerId']) delete payload[k];
+      if (REQUESTER_ROLES.includes(currentUser?.role) && payload.status && !['Cancelled', 'Canceled'].includes(payload.status)) {
+        throw new AppError('You can only cancel an order. Contact the sign company for other changes.', 403);
+      }
     }
 
     const prevStatus = order.status;

@@ -12,7 +12,7 @@ async function runOrdersTests() {
   const loginRes = await fetch('http://localhost:5097/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@instapost.com', password: 'User@123456' }),
+    body: JSON.stringify({ email: 'admin@instapost.com', password: process.env.SEED_DEMO_PASSWORD }),
   });
   const loginData: any = await loginRes.json();
   authToken = loginData?.data?.accessToken || '';

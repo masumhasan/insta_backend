@@ -1,5 +1,6 @@
 import { Notification } from './notification.model';
 import { User } from '../auth/user.model';
+import { AppError } from '../../utils/apiError';
 
 function buildRecipientFilter(query: { userId?: string; email?: string; role?: string }) {
   const orClauses: any[] = [];
@@ -107,9 +108,25 @@ export class NotificationService {
     return created;
   }
 
-  static async markRead(id: string) {
-    const doc = await Notification.findByIdAndUpdate(id, { $set: { read: true } }, { new: true });
-    return { id, read: Boolean(doc?.read ?? true) };
+  /** A notification belongs to a user when it targets their id, email or role (or everyone). Staff may touch any. */
+  private static async loadOwned(id: string, user: any) {
+    const doc = await Notification.findById(id);
+    if (!doc) throw new AppError('Notification not found.', 404);
+    const staff = ['Admin', 'Sign company', 'Office Manager'].includes(user?.role);
+    const mine =
+      staff ||
+      (await Notification.exists({
+        $and: [{ _id: id }, buildRecipientFilter({ userId: String(user?._id || ''), email: user?.email, role: user?.role })],
+      }));
+    if (!mine) throw new AppError('Access forbidden for this notification.', 403);
+    return doc;
+  }
+
+  static async markRead(id: string, user?: any) {
+    const doc = await this.loadOwned(id, user);
+    doc.read = true;
+    await doc.save();
+    return { id, read: true };
   }
 
   static async markAllRead(filterQuery: { userId?: string; email?: string; role?: string }) {
@@ -118,7 +135,8 @@ export class NotificationService {
     return true;
   }
 
-  static async deleteNotification(id: string) {
+  static async deleteNotification(id: string, user?: any) {
+    await this.loadOwned(id, user);
     await Notification.findByIdAndDelete(id);
     return true;
   }

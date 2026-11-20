@@ -4,6 +4,10 @@ import { config } from '../../config/env';
 import { AppError } from '../../utils/apiError';
 import { sendOtpEmail } from '../../config/mailer';
 import { extractImageFields, cleanupReplacedAsset } from '../../utils/imageGuard';
+import { createHash, randomInt, timingSafeEqual } from 'crypto';
+
+const hashOtp = (code: string) => createHash('sha256').update(code).digest('hex');
+const safeEqual = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 const PORTAL_ALLOWED_ROLES: Record<string, string[]> = {
   admin: ['Admin'],
@@ -87,8 +91,8 @@ export class AuthService {
     if (!user) {
       return { message: 'If that email exists, an OTP code has been sent.' };
     }
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    user.otp = otpCode;
+    const otpCode = randomInt(100000, 1000000).toString();
+    user.otp = hashOtp(otpCode); // only the hash is stored
     user.otpExpiry = new Date(Date.now() + 30 * 60 * 1000); // 30 mins
     user.otpAttempts = 0;
     await user.save();
@@ -110,7 +114,11 @@ export class AuthService {
       throw new AppError('OTP has expired. Please request a new one.', 400);
     }
 
-    if (user.otp !== otpCode.trim()) {
+    if (user.lockUntil && user.lockUntil.getTime() > Date.now()) {
+      throw new AppError('Too many incorrect codes. Please try again later.', 429);
+    }
+
+    if (!safeEqual(user.otp, hashOtp(String(otpCode || '').trim()))) {
       user.otpAttempts += 1;
       if (user.otpAttempts >= 3) {
         user.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 min lock

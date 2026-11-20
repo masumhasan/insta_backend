@@ -1,5 +1,7 @@
 import { connectDatabase, disconnectDatabase } from '../config/database';
 import { User } from '../modules/auth/user.model';
+const DEMO_PASSWORD = process.env.SEED_DEMO_PASSWORD || '';
+if (!DEMO_PASSWORD) throw new Error('Set SEED_DEMO_PASSWORD in backend/.env before running the seeds.');
 
 async function seedPendingApplicants() {
   await connectDatabase();
@@ -8,7 +10,7 @@ async function seedPendingApplicants() {
     {
       name: 'John Carter',
       email: 'john.carter@realty.com',
-      password: 'User@123456',
+      password: DEMO_PASSWORD,
       role: 'Agent' as const,
       phone: '+1 (214) 555-0181',
       company: 'Omega Realty Group',
@@ -20,7 +22,7 @@ async function seedPendingApplicants() {
     {
       name: 'Sarah Ahmed',
       email: 'sarah.ahmed@primeestate.com',
-      password: 'User@123456',
+      password: DEMO_PASSWORD,
       role: 'Agent' as const,
       phone: '+1 (214) 555-0182',
       company: 'Prime Estate Signs',
@@ -32,7 +34,7 @@ async function seedPendingApplicants() {
     {
       name: 'Michael Brown',
       email: 'michael.brown@urbansigns.com',
-      password: 'User@123456',
+      password: DEMO_PASSWORD,
       role: 'Agent' as const,
       phone: '+1 (214) 555-0183',
       company: 'Urban Sign Masters',
