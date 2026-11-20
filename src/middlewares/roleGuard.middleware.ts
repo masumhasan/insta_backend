@@ -5,7 +5,8 @@ import { UserRole } from '../modules/auth/user.model';
 
 /** Roles that run the business: they may edit catalog, settings, prices, invoices and any user. */
 export const STAFF_ROLES: UserRole[] = ['Admin', 'Sign company', 'Office Manager'];
-export const isStaff = (user?: { role?: string }) => !!user?.role && (STAFF_ROLES as string[]).includes(user.role);
+export const isStaff = (user?: { role?: string }) =>
+  !!user?.role && STAFF_ROLES.some((r) => r.toLowerCase() === String(user.role).trim().toLowerCase());
 
 export const authorizeRoles = (...roles: UserRole[]) => {
   return (req: AuthRequest, _res: Response, next: NextFunction): void => {

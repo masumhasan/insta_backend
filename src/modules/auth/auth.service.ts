@@ -11,6 +11,9 @@ const safeEqual = (a: string, b: string) => a.length === b.length && timingSafeE
 
 const PORTAL_ALLOWED_ROLES: Record<string, string[]> = {
   admin: ['Admin'],
+  agent: ['Agent', 'Admin', 'Sign company'],
+  assistant: ['Assistant', 'Admin', 'Sign company'],
+  teamlead: ['Team Lead', 'Admin', 'Sign company'],
   sign_company: ['Sign company', 'Office Manager', 'Team Lead'],
   installer: ['Installer', 'Photographer'],
   warehouse: ['Warehouse manager', 'Agent', 'Assistant', 'Team Lead', 'Office Manager'],

@@ -13,7 +13,7 @@ const required = (name: string): string => {
 export const config = {
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '5000', 10),
-  mongodbUri: required('MONGODB_URI'),
+  mongodbUri: required('MONGODB_URI').trim(),
   jwt: {
     secret: required('JWT_TOKEN'),
     expiresIn: process.env.JWT_TOKEN_EXPIRY || '7d',
