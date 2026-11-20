@@ -121,7 +121,7 @@ async function main() {
       results.push({ ok: foreign.length === 0, line: `${foreign.length === 0 ? 'PASS' : 'FAIL'}  Agent invoice list has no unrelated invoices (${rows.length} rows)` });
       const { ClientInvoice } = await import('../modules/invoice/invoice.model');
       const { Order } = await import('../modules/order/order.model');
-      const others: any[] = await ClientInvoice.find({ clientName: { $ne: agentDoc.name } }).limit(50).lean();
+      const others: any[] = await ClientInvoice.find({ clientName: { $ne: agentDoc.name }, clientEmail: { $ne: String(agentDoc.email).toLowerCase() } }).limit(200).lean();
       for (const inv of others) {
         const order: any = inv.orderId ? await Order.findOne({ orderNumber: inv.orderId }).lean() : null;
         if (order && order.agentId !== agent.id && String(order.agent).toLowerCase() !== String(agentDoc.name).toLowerCase()) {

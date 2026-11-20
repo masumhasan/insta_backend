@@ -95,6 +95,11 @@ export interface IMediaDeliveryDocument extends Document {
   photoCount: number;
   videoCount: number;
   orderNumber?: string;
+  listingPrice?: string;
+  shotBy?: string;
+  dateShot?: string;
+  rushed?: boolean;
+  notes?: string;
 }
 
 const mediaDeliverySchema = new Schema<IMediaDeliveryDocument>(
@@ -106,6 +111,11 @@ const mediaDeliverySchema = new Schema<IMediaDeliveryDocument>(
     photoCount: { type: Number, default: 0 },
     videoCount: { type: Number, default: 0 },
     orderNumber: { type: String, default: '' },
+    listingPrice: { type: String, default: '' },
+    shotBy: { type: String, default: '' },
+    dateShot: { type: String, default: '' },
+    rushed: { type: Boolean, default: false },
+    notes: { type: String, default: '' },
   },
   { timestamps: true }
 );

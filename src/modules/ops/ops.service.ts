@@ -53,7 +53,24 @@ export class OpsService {
   }
 
   static async updateMediaTask(id: string, payload: any) {
-    const doc = await MediaTask.findByIdAndUpdate(id, { $set: payload }, { new: true });
+    const editable = ['address', 'client', 'taskName', 'tags', 'dueDate', 'shotBy', 'editor', 'listingPrice', 'status', 'category', 'media', 'hasActions'];
+    const update: Record<string, any> = {};
+    for (const key of editable) if (payload?.[key] !== undefined) update[key] = payload[key];
+    // Note edits/deletes send the full list back; keep only the known note fields and the original authors.
+    if (Array.isArray(payload?.notes)) {
+      const current = await MediaTask.findById(id).select('notes').lean();
+      if (!current) throw new AppError('Media task not found.', 404);
+      const byId = new Map((current.notes || []).map((n: any) => [n.id, n]));
+      update.notes = payload.notes
+        .filter((n: any) => n && byId.has(n.id))
+        .map((n: any) => {
+          const text = String(n.text ?? '').trim();
+          const orig: any = byId.get(n.id);
+          return { id: orig.id, author: orig.author, createdAt: orig.createdAt, text: text || orig.text };
+        });
+    }
+    if (Object.keys(update).length === 0) throw new AppError('Nothing to update.', 400);
+    const doc = await MediaTask.findByIdAndUpdate(id, { $set: update }, { new: true, runValidators: true });
     if (!doc) throw new AppError('Media task not found.', 404);
     return { ...doc.toObject(), id: doc._id.toString() };
   }
