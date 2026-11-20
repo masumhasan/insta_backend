@@ -55,7 +55,8 @@ router.patch('/packages/:id', staffOnly, updatePackage);
 router.delete('/packages/:id', staffOnly, deletePackage);
 
 // Coupons
-router.get('/coupons', getCoupons);
+// Coupon codes are staff-only; customers validate a code through GET /orders/coupon-preview.
+router.get('/coupons', staffOnly, getCoupons);
 router.post('/coupons', staffOnly, createCoupon);
 router.patch('/coupons/:id', staffOnly, updateCoupon);
 router.delete('/coupons/:id', staffOnly, deleteCoupon);

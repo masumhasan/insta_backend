@@ -1,7 +1,12 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
+export const PACKAGE_CATEGORIES = ['media', 'open_house', 'for_sale'] as const;
+export type PackageCategory = (typeof PACKAGE_CATEGORIES)[number];
+
 export interface IPackageDocument extends Document {
   title: string;
+  category: PackageCategory;
+  linkedServices: { id: string; name: string; price?: number; image?: string; icon?: string; active?: boolean }[];
   price: number;
   imageUrl?: string;
   publicId?: string;
@@ -17,6 +22,20 @@ export interface IPackageDocument extends Document {
 const packageSchema = new Schema<IPackageDocument>(
   {
     title: { type: String, required: true, trim: true },
+    // Which Packages tab / order form the package belongs to.
+    category: { type: String, enum: PACKAGE_CATEGORIES, default: 'media', index: true },
+    // Optional upsell services shown with the package on the order page.
+    linkedServices: [
+      {
+        _id: false,
+        id: { type: String },
+        name: { type: String, required: true },
+        price: { type: Number, default: 0 },
+        image: { type: String, default: '' },
+        icon: { type: String, default: '' },
+        active: { type: Boolean, default: true },
+      },
+    ],
     price: { type: Number, required: true, default: 0 },
     imageUrl: { type: String, default: '' },
     publicId: { type: String, default: '' },

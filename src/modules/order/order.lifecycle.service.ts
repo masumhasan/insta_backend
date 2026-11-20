@@ -2,6 +2,7 @@ import { Order } from './order.model';
 import { Inventory } from '../inventory/inventory.model';
 import { NotificationService } from '../notification/notification.service';
 import { AppError } from '../../utils/apiError';
+import { isOrderVisibleToUser } from './order.service';
 
 const findOrderOrThrow = async (id: string) => {
   const order = await Order.findOne({
@@ -169,24 +170,58 @@ export class OrderLifecycleService {
     };
   }
 
+  /**
+   * Pull list: the warehouse/installer verifies every item for an order, then marks it Ready for Install.
+   * Readiness is its own flag (it never overwrites the order status) and is cleared again if an item is un-verified.
+   */
   static async updatePullList(
     id: string,
-    payload: {
-      pullList?: any[];
-      readyForInstall?: boolean;
-      missingItems?: string[];
-      newPickedItems?: { product: string; size?: string; owner?: string; quantity?: number; location?: string; barcode?: string }[];
-    }
+    payload: { pullList?: any[]; readyForInstall?: boolean; missingItems?: string[] },
+    user?: any
   ) {
     const order = await findOrderOrThrow(id);
+    if (user && !(await isOrderVisibleToUser(order, user))) throw new AppError('Access forbidden for this order.', 403);
+
     if (Array.isArray(payload.pullList)) {
-      order.pullList = payload.pullList as any;
+      const before = new Map((order.pullList || []).map((i: any) => [i.id, i]));
+      const now = new Date().toISOString();
+      order.pullList = payload.pullList.map((raw: any) => {
+        const prev: any = before.get(raw.id);
+        const checked = !!raw.checked;
+        const justChecked = checked && !prev?.checked;
+        return {
+          id: raw.id,
+          product: raw.product,
+          itemId: raw.itemId ?? prev?.itemId ?? '',
+          barcode: raw.barcode ?? prev?.barcode ?? '',
+          quantity: raw.quantity ?? prev?.quantity ?? 1,
+          owner: raw.owner ?? prev?.owner ?? '',
+          location: raw.location ?? prev?.location ?? '',
+          instruction: raw.instruction ?? prev?.instruction ?? '',
+          imageUrl: raw.imageUrl ?? prev?.imageUrl ?? '',
+          publicId: raw.publicId ?? prev?.publicId ?? '',
+          checked,
+          checkedAt: checked ? (justChecked ? now : prev?.checkedAt || now) : '',
+          checkedBy: checked ? (justChecked ? user?.name || '' : prev?.checkedBy || '') : '',
+        };
+      }) as any;
     }
-    if (Array.isArray(payload.missingItems)) {
-      order.missingItems = payload.missingItems;
-    }
-    if (payload.readyForInstall) {
-      order.status = order.status.includes('Up') ? 'Assigned Up' : 'Ready for Install';
+    if (Array.isArray(payload.missingItems)) order.missingItems = payload.missingItems;
+
+    const list: any[] = order.pullList || [];
+    const unverified = list.filter((i) => !i.checked).length;
+    const missing = (order.missingItems || []).length;
+
+    if (payload.readyForInstall === true) {
+      if (list.length === 0) throw new AppError('This order has no pull list items.', 400);
+      if (unverified > 0) throw new AppError(`Verify every item first (${unverified} still to verify).`, 400);
+      if (missing > 0) throw new AppError('Resolve the items flagged missing before marking the order ready.', 400);
+      order.pullReadyAt = new Date();
+      order.pullReadyBy = user?.name || '';
+      if (order.type === 'Sign Printing' && order.status === 'In Production') order.status = 'Ready for Install';
+    } else if (payload.readyForInstall === false || unverified > 0 || missing > 0) {
+      order.pullReadyAt = undefined;
+      order.pullReadyBy = '';
     }
     await order.save();
 
@@ -198,45 +233,14 @@ export class OrderLifecycleService {
         type: 'order',
         referenceId: order.orderNumber,
       });
-    } else if (payload.readyForInstall) {
+    } else if (payload.readyForInstall === true) {
       await NotificationService.safeNotify({
         recipientRole: 'Sign company',
         title: `Pull Ready for Install (${order.orderNumber})`,
-        message: `${order.type} at ${order.address} marked ready for field install.`,
+        message: `${order.type} at ${order.address} has every pull item verified and is ready for the field.`,
         type: 'order',
         referenceId: order.orderNumber,
       });
-    }
-
-    const createdInventory: any[] = [];
-    if (Array.isArray(payload.newPickedItems)) {
-      for (const np of payload.newPickedItems) {
-        if (!np?.product) continue;
-        const qty = Math.max(1, Number(np.quantity) || 1);
-        const doc = await Inventory.create({
-          product: np.product.trim(),
-          size: np.size || 'Standard',
-          owner: np.owner || order.agent || 'Instapost LLC',
-          available: qty,
-          installed: 0,
-          total: qty,
-          itemType: np.size || 'Rider',
-          barcode: np.barcode || `BAR-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 900 + 100)}`,
-          location: np.location || 'Field Pickup -> Warehouse Queue',
-          history: [
-            {
-              id: `hist-${Date.now()}`,
-              date: new Date().toISOString().split('T')[0],
-              status: 'Processing for Return',
-              address: order.address,
-              installer: order.installerName || 'Field Installer',
-              agent: order.agent,
-              notes: `New item picked up from order ${order.orderNumber}`,
-            },
-          ],
-        });
-        createdInventory.push({ id: doc._id.toString(), product: doc.product, barcode: doc.barcode });
-      }
     }
 
     return {
@@ -245,8 +249,45 @@ export class OrderLifecycleService {
       status: order.status,
       pullList: order.pullList,
       missingItems: order.missingItems || [],
-      createdInventory,
+      readyForInstall: !!order.pullReadyAt,
+      readyForInstallAt: order.pullReadyAt ? order.pullReadyAt.toISOString() : '',
+      readyForInstallBy: order.pullReadyBy || '',
     };
+  }
+
+  /** Verifies one pull item by scanning a barcode: an item barcode, a unit barcode or an item id from inventory. */
+  static async scanPullItem(id: string, code: string, user?: any) {
+    const order = await findOrderOrThrow(id);
+    if (user && !(await isOrderVisibleToUser(order, user))) throw new AppError('Access forbidden for this order.', 403);
+    const clean = String(code || '').trim();
+    if (!clean) throw new AppError('Scan or type a barcode.', 400);
+
+    const exact = new RegExp('^' + clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const inv: any = await Inventory.findOne({ $or: [{ itemId: exact }, { barcode: exact }, { 'units.barcode': exact }] }).lean();
+    if (!inv) throw new AppError(`No inventory item has the barcode "${clean}".`, 404);
+
+    const same = (i: any) =>
+      (i.itemId && inv.itemId && String(i.itemId).toLowerCase() === String(inv.itemId).toLowerCase()) ||
+      String(i.product || '').trim().toLowerCase() === String(inv.product || '').trim().toLowerCase();
+    const list: any[] = order.pullList || [];
+    const target = list.find((i) => !i.checked && same(i));
+    if (!target) {
+      throw new AppError(
+        list.some(same) ? `"${inv.product}" is already verified on this order.` : `"${inv.product}" is not on this order's pull list.`,
+        list.some(same) ? 409 : 404
+      );
+    }
+    target.checked = true;
+    target.barcode = clean;
+    target.checkedAt = new Date().toISOString();
+    target.checkedBy = user?.name || '';
+    order.markModified('pullList');
+    if (list.some((i) => !i.checked)) {
+      order.pullReadyAt = undefined;
+      order.pullReadyBy = '';
+    }
+    await order.save();
+    return { _id: order._id.toString(), verified: inv.product, pullList: order.pullList, remaining: list.filter((i) => !i.checked).length };
   }
 
   static async importCsvRows(rows: any[]) {

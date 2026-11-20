@@ -14,7 +14,9 @@ import {
   processOrderPayment,
   requestDueDateChange,
   updateOrderPullList,
+  scanPullItem,
   getPricing,
+  previewCoupon,
 } from './order.controller';
 import { uploadImage } from '../../middlewares/upload.middleware';
 import { authenticate } from '../../middlewares/auth.middleware';
@@ -27,6 +29,7 @@ router.use(authenticate);
 router.get('/', getOrders);
 router.get('/route-plan', getRoutePlan);
 router.get('/pricing', getPricing);
+router.get('/coupon-preview', previewCoupon);
 router.get('/revenue', authorizeRoles('Admin', 'Sign company', 'Office Manager'), getRevenue);
 router.post('/import-csv', authorizeRoles('Admin', 'Sign company', 'Office Manager'), importCsvOrders);
 router.post('/', createOrder);
@@ -42,6 +45,11 @@ router.patch(
   '/:id/pull-list',
   authorizeRoles('Admin', 'Sign company', 'Installer', 'Photographer', 'Warehouse manager', 'Office Manager'),
   updateOrderPullList
+);
+router.post(
+  '/:id/pull-list/scan',
+  authorizeRoles('Admin', 'Sign company', 'Installer', 'Photographer', 'Warehouse manager', 'Office Manager'),
+  scanPullItem
 );
 router.post('/:id/refund', authorizeRoles('Admin', 'Sign company', 'Office Manager'), refundOrder);
 router.post('/:id/process-payment', authorizeRoles('Admin', 'Sign company', 'Office Manager'), processOrderPayment);

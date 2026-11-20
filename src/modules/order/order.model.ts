@@ -38,9 +38,16 @@ export interface IOrderDocument extends Document {
     status?: 'none' | 'pending' | 'approved' | 'rejected';
     requestedBy?: string;
   };
+  /** Set when every pull-list item is verified and the order is marked Ready for Install. */
+  pullReadyAt?: Date;
+  pullReadyBy?: string;
   pullList?: {
     id: string;
     product: string;
+    itemId?: string;
+    barcode?: string;
+    checkedAt?: string;
+    checkedBy?: string;
     quantity: number;
     owner: string;
     location: string;
@@ -99,10 +106,16 @@ const orderSchema = new Schema<IOrderDocument>(
     photos: [orderPhotoSchema],
     missingItems: [{ type: String }],
     dueDateRequest: { type: Schema.Types.Mixed, default: { status: 'none' } },
+    pullReadyAt: { type: Date },
+    pullReadyBy: { type: String, default: '' },
     pullList: [
       {
         id: { type: String },
         product: { type: String },
+        itemId: { type: String, default: '' },
+        barcode: { type: String, default: '' },
+        checkedAt: { type: String, default: '' },
+        checkedBy: { type: String, default: '' },
         quantity: { type: Number, default: 1 },
         owner: { type: String },
         location: { type: String },

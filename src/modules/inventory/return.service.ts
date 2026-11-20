@@ -2,13 +2,20 @@ import { ReturnRecord } from './return.model';
 import { Inventory } from './inventory.model';
 import { AppError } from '../../utils/apiError';
 import { NotificationService } from '../notification/notification.service';
+import { Order } from '../order/order.model';
+import { isOrderVisibleToUser } from '../order/order.service';
+import { isFieldUser } from '../order/order.workflow';
+
+const CONDITIONS = ['reusable', 'repair', 'damaged', 'scrap', 'new_item'];
 
 /**
  * Manages field return inspections, review queues, and restock/decommission transitions.
  */
 export class InventoryReturnService {
-  static async getReturns(query: { condition?: string; status?: string; search?: string } = {}) {
+  static async getReturns(query: { condition?: string; status?: string; search?: string } = {}, user?: any) {
     const filter: any = {};
+    // Installers and photographers only see the returns they logged themselves; the warehouse and staff see all.
+    if (isFieldUser(user)) filter.recoveredBy = user.name;
     if (query.condition && query.condition !== 'all') filter.condition = query.condition;
     if (query.status && query.status !== 'all') filter.status = query.status;
     if (query.search?.trim()) {
@@ -45,16 +52,30 @@ export class InventoryReturnService {
       total: mapped.length,
       reusable: mapped.filter((r) => r.condition === 'reusable').length,
       repair: mapped.filter((r) => r.condition === 'repair').length,
-      scrap: mapped.filter((r) => r.condition === 'scrap' || r.condition === 'damaged').length,
+      damaged: mapped.filter((r) => r.condition === 'damaged').length,
+      scrap: mapped.filter((r) => r.condition === 'scrap').length,
       newItems: mapped.filter((r) => r.condition === 'new_item').length,
+      pendingReview: mapped.filter((r) => r.status === 'Pending Review').length,
     };
 
     return { records: mapped, stats };
   }
 
-  static async createReturn(payload: any) {
+  static async createReturn(payload: any, user?: any) {
     const qty = Math.max(1, Number(payload.quantity) || 1);
-    const cond = (payload.condition || 'reusable') as any;
+    // The portals have used both "new" and "new_item", and "notes" / "inspectionNotes".
+    const cond = (String(payload.condition || 'reusable') === 'new' ? 'new_item' : payload.condition || 'reusable') as any;
+    if (!CONDITIONS.includes(cond)) throw new AppError(`Condition must be one of: ${CONDITIONS.join(', ')}.`, 400);
+    const notes = String(payload.inspectionNotes ?? payload.notes ?? '').trim();
+    const fieldStaff = isFieldUser(user);
+
+    // A return can be linked to an order, but only one the person can see.
+    let linkedOrder: any = null;
+    if (payload.orderId) {
+      linkedOrder = await Order.findOne({ orderNumber: String(payload.orderId) }).lean();
+      if (!linkedOrder) throw new AppError('That order was not found.', 404);
+      if (user && !(await isOrderVisibleToUser(linkedOrder, user))) throw new AppError('You cannot log a return for that order.', 403);
+    }
     const queueType = cond === 'new_item' ? 'new_item' : cond === 'repair' ? 'repair' : cond === 'scrap' || cond === 'damaged' ? 'damaged' : 'reusable';
     let itemName = String(payload.itemName || '').trim();
     let inventoryDoc: any = null;
@@ -72,12 +93,13 @@ export class InventoryReturnService {
       quantity: qty,
       condition: cond,
       queueType,
-      status: cond === 'reusable' ? 'Restored & Added to Inventory' : 'Pending Review',
-      agent: payload.agent || inventoryDoc?.owner || 'Instapost LLC',
+      // Field staff only report what they recovered; the warehouse confirms it and the stock is added at that point.
+      status: cond === 'reusable' && !fieldStaff ? 'Restored & Added to Inventory' : 'Pending Review',
+      agent: linkedOrder?.agent || payload.agent || inventoryDoc?.owner || 'Instapost LLC',
       office: payload.office || inventoryDoc?.office || 'Main Office',
-      recoveredFrom: payload.recoveredFrom || payload.orderId || 'Field Removal',
-      recoveredBy: payload.recoveredBy || 'Installer',
-      inspectionNotes: payload.inspectionNotes || '',
+      recoveredFrom: linkedOrder?.address || payload.recoveredFrom || 'Field pickup',
+      recoveredBy: user?.name || payload.recoveredBy || 'Installer',
+      inspectionNotes: notes,
     });
 
     await NotificationService.safeNotify({
@@ -89,7 +111,7 @@ export class InventoryReturnService {
       createdBy: record.recoveredBy,
     });
 
-    if (inventoryDoc && cond === 'reusable') {
+    if (inventoryDoc && cond === 'reusable' && !fieldStaff) {
       inventoryDoc.available = (inventoryDoc.available || 0) + qty;
       inventoryDoc.installed = Math.max(0, (inventoryDoc.installed || 0) - qty);
       inventoryDoc.total = inventoryDoc.available + inventoryDoc.installed;
@@ -101,12 +123,12 @@ export class InventoryReturnService {
           address: inventoryDoc.location || 'Warehouse-1',
           installer: record.recoveredBy,
           agent: inventoryDoc.owner,
-          notes: `Returned (${cond}, qty: ${qty}) ${payload.inspectionNotes || ''}`.trim(),
+          notes: `Returned (${cond}, qty: ${qty}) ${notes}`.trim(),
         },
         ...(inventoryDoc.history || []),
       ];
       await inventoryDoc.save();
-    } else if (cond === 'new_item' && !inventoryDoc) {
+    } else if (cond === 'new_item' && !inventoryDoc && !fieldStaff) {
       await Inventory.create({
         product: itemName,
         itemType: payload.itemType || 'Rider',
@@ -131,19 +153,20 @@ export class InventoryReturnService {
       });
     }
 
-    return record;
+    return { ...record.toObject(), id: String(record._id) };
   }
 
   static async processQueueItem(id: string, payload: { status?: string; notes?: string; condition?: string }) {
     const record = await ReturnRecord.findById(id);
     if (!record) throw new AppError('Return record not found.', 404);
 
+    const wasRestored = record.status === 'Restored & Added to Inventory';
     if (payload.status) record.status = payload.status as any;
     if (payload.condition) record.condition = payload.condition as any;
     if (payload.notes !== undefined) record.inspectionNotes = payload.notes;
     await record.save();
 
-    if (payload.status === 'Restored & Added to Inventory') {
+    if (payload.status === 'Restored & Added to Inventory' && !wasRestored) {
       if (record.inventoryId && record.inventoryId.match(/^[0-9a-fA-F]{24}$/)) {
         const inv = await Inventory.findById(record.inventoryId);
         if (inv) {

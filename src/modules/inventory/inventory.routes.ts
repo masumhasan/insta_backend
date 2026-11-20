@@ -26,7 +26,7 @@ const fieldTeam = authorizeRoles(...STAFF_ROLES, 'Warehouse manager', 'Installer
 
 router.use(authenticate);
 router.get('/', getInventory);
-router.get('/returns', getReturns);
+router.get('/returns', fieldTeam, getReturns);
 router.post('/returns', fieldTeam, createReturn);
 router.patch('/returns/:id', stockWriters, processQueueItem);
 router.post('/import-csv', stockWriters, importInventoryCsv);

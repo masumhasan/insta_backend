@@ -37,12 +37,12 @@ export const importInventoryCsv = asyncHandler(async (req: Request, res: Respons
 });
 
 export const getReturns = asyncHandler(async (req: Request, res: Response) => {
-  const data = await InventoryReturnService.getReturns(req.query as any);
+  const data = await InventoryReturnService.getReturns(req.query as any, (req as any).user);
   return ApiResponse.success(res, 200, 'Return records retrieved successfully', data);
 });
 
 export const createReturn = asyncHandler(async (req: Request, res: Response) => {
-  const data = await InventoryReturnService.createReturn(req.body);
+  const data = await InventoryReturnService.createReturn(req.body, (req as any).user);
   return ApiResponse.success(res, 201, 'Return processed successfully', data);
 });
 

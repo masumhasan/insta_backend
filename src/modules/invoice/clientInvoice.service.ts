@@ -4,6 +4,7 @@ import { NotificationService } from '../notification/notification.service';
 import { AppError } from '../../utils/apiError';
 import { buildInvoicePdfBuffer, type IPdfLine } from './invoice.pdf';
 import { Counter, nextSequence } from '../inventory/counter.model';
+import { buildScopeClause, isOrderVisibleToUser } from '../order/order.service';
 
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
 
@@ -16,11 +17,16 @@ const findClientInvoiceOrThrow = async (id: string) => {
   return doc;
 };
 
-/** Agents, Team Leads and Assistants only see their own invoices. */
-const assertInvoiceVisible = (doc: any, user?: any) => {
-  if (!user || !['Agent', 'Team Lead', 'Assistant'].includes(user.role)) return;
-  const mine = (doc.clientEmail && doc.clientEmail === String(user.email || '').toLowerCase()) || doc.clientName === user.name;
-  if (!mine) throw new AppError('Access forbidden for this invoice.', 403);
+const CUSTOMER_ROLES = ['Agent', 'Team Lead', 'Assistant'];
+
+/** Customers see the invoices of the orders they can see (same rule as orders), plus any invoice made out to them. */
+const assertInvoiceVisible = async (doc: any, user?: any) => {
+  if (!user || !CUSTOMER_ROLES.includes(user.role)) return;
+  const addressedToUser =
+    (doc.clientEmail && doc.clientEmail === String(user.email || '').toLowerCase()) || doc.clientName === user.name;
+  if (addressedToUser) return;
+  const order = doc.orderId ? await Order.findOne({ orderNumber: doc.orderId }).lean() : null;
+  if (!order || !(await isOrderVisibleToUser(order, user))) throw new AppError('Access forbidden for this invoice.', 403);
 };
 
 /** Next free INV-#### number. The counter is lifted to the highest existing number first, so it never collides. */
@@ -79,10 +85,18 @@ export class ClientInvoiceService {
         { address: { $regex: term, $options: 'i' } },
       ];
     }
-    if (currentUser?.role && ['Agent', 'Team Lead', 'Assistant'].includes(currentUser.role)) {
+    if (currentUser?.role && CUSTOMER_ROLES.includes(currentUser.role)) {
+      const scope = await buildScopeClause(currentUser);
+      const visibleOrders = scope ? await Order.find(scope).select('orderNumber').lean() : [];
       filter.$and = [
         ...(filter.$and || []),
-        { $or: [{ clientEmail: currentUser.email?.toLowerCase() }, { clientName: currentUser.name }] },
+        {
+          $or: [
+            { orderId: { $in: visibleOrders.map((o: any) => o.orderNumber) } },
+            { clientEmail: currentUser.email?.toLowerCase() },
+            { clientName: currentUser.name },
+          ],
+        },
       ];
     }
 
@@ -99,7 +113,7 @@ export class ClientInvoiceService {
 
   static async getInvoiceById(id: string, user?: any) {
     const doc = await findClientInvoiceOrThrow(id);
-    assertInvoiceVisible(doc, user);
+    await assertInvoiceVisible(doc, user);
     return formatClientInvoice(doc.toObject());
   }
 
@@ -236,7 +250,7 @@ export class ClientInvoiceService {
 
   static async generatePdf(id: string, user?: any): Promise<{ filename: string; buffer: Buffer }> {
     const doc = await findClientInvoiceOrThrow(id);
-    assertInvoiceVisible(doc, user);
+    await assertInvoiceVisible(doc, user);
     const inv: IClientInvoiceDocument = doc;
     const refundedTotal = (inv.refunds || []).reduce((s, r) => s + (Number(r.amount) || 0), 0);
 

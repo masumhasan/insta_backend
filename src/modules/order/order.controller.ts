@@ -1,4 +1,4 @@
-import { getPricingConfig } from './order.pricing';
+import { getPricingConfig, couponDiscount } from './order.pricing';
 import { Request, Response } from 'express';
 import { OrderService } from './order.service';
 import { OrderLifecycleService } from './order.lifecycle.service';
@@ -105,8 +105,21 @@ export const requestDueDateChange = asyncHandler(async (req: Request, res: Respo
 });
 
 export const updateOrderPullList = asyncHandler(async (req: Request, res: Response) => {
-  const result = await OrderLifecycleService.updatePullList(req.params.id as string, req.body);
+  const result = await OrderLifecycleService.updatePullList(req.params.id as string, req.body, (req as any).user);
   return ApiResponse.success(res, 200, 'Pull list updated successfully', result);
+});
+
+export const scanPullItem = asyncHandler(async (req: Request, res: Response) => {
+  const result = await OrderLifecycleService.scanPullItem(req.params.id as string, req.body?.code, (req as any).user);
+  return ApiResponse.success(res, 200, `Verified ${result.verified}`, result);
+});
+
+
+/** Checkout preview: discount for one coupon code on a subtotal. Throws 400 for an invalid code, so the coupon list stays private. */
+export const previewCoupon = asyncHandler(async (req: Request, res: Response) => {
+  const subtotal = Math.max(0, Number(req.query.subtotal) || 0);
+  const discountAmount = await couponDiscount(req.query.code, subtotal);
+  return ApiResponse.success(res, 200, 'Coupon applied', { code: String(req.query.code || '').trim().toUpperCase(), discountAmount });
 });
 
 export const getPricing = asyncHandler(async (_req: Request, res: Response) => {

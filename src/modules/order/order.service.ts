@@ -6,6 +6,7 @@ import { AppError } from '../../utils/apiError';
 import { assertNoBase64 } from '../../utils/imageGuard';
 import { isStaff } from '../../middlewares/roleGuard.middleware';
 import { priceCustomerOrder } from './order.pricing';
+import { assertFieldStatusChange, isFieldUser, nextStatuses } from './order.workflow';
 import { Coupon } from '../catalog/coupon.model';
 
 /** Money and payment fields: only staff may set or change them after an order exists. */
@@ -68,6 +69,26 @@ const TYPE_ALIASES: Record<string, string> = {
   'change-panel-rider': 'Sign Change',
   'other-order-service': 'Other Services',
   media: 'Media Services',
+};
+
+/**
+ * Who an order belongs to. Agents, assistants and team leads cannot pick another person: the order is theirs.
+ * The one exception is a Team Lead ordering for an active agent (the "Order For Agent" action).
+ * Staff and warehouse managers keep choosing the agent on the form.
+ */
+const enforceOrderOwner = async (payload: any, currentUser?: any) => {
+  if (!currentUser || !REQUESTER_ROLES.includes(currentUser.role)) return payload;
+  const self = String(currentUser._id);
+  const forOther = currentUser.role === 'Team Lead' && payload.agentId && String(payload.agentId) !== self;
+  if (!forOther) {
+    return { ...payload, agentId: self, agent: currentUser.name, parentAgentId: currentUser.parentAgentId || '' };
+  }
+  if (!/^[0-9a-fA-F]{24}$/.test(String(payload.agentId))) throw new AppError('Choose a valid agent.', 400);
+  const target: any = await User.findById(payload.agentId).select('name role status parentAgentId').lean();
+  if (!target || target.role !== 'Agent' || ['blocked', 'rejected', 'pending_approval'].includes(target.status)) {
+    throw new AppError('Team leads can only place orders for an active agent.', 403);
+  }
+  return { ...payload, agentId: String(target._id), agent: target.name, parentAgentId: target.parentAgentId || '' };
 };
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -138,6 +159,9 @@ const formatOrder = (o: any) => ({
   installerId: o.installerId || '',
   photos: normalizePhotos(o.photos),
   pullList: Array.isArray(o.pullList) ? o.pullList : [],
+  readyForInstall: !!o.pullReadyAt,
+  readyForInstallAt: o.pullReadyAt ? new Date(o.pullReadyAt).toISOString() : '',
+  readyForInstallBy: o.pullReadyBy || '',
   missingItems: Array.isArray(o.missingItems) ? o.missingItems : [],
   dueDateRequest: o.dueDateRequest || { status: 'none' },
   specifications: o.specifications || {},
@@ -151,7 +175,7 @@ const resolveParentAgentName = async (parentAgentId?: string): Promise<string> =
   return parent?.name || '';
 };
 
-const buildScopeClause = async (currentUser?: any) => {
+export const buildScopeClause = async (currentUser?: any) => {
   if (!currentUser?.role) return null;
   if (['Installer', 'Photographer'].includes(currentUser.role)) {
     return {
@@ -178,7 +202,7 @@ const buildScopeClause = async (currentUser?: any) => {
   return null;
 };
 
-const isOrderVisibleToUser = async (order: any, currentUser?: any): Promise<boolean> => {
+export const isOrderVisibleToUser = async (order: any, currentUser?: any): Promise<boolean> => {
   if (!currentUser?.role) return true;
   if (['Admin', 'Sign company', 'Warehouse manager', 'Office Manager'].includes(currentUser.role)) {
     return true;
@@ -284,7 +308,7 @@ export class OrderService {
     ]);
 
     return {
-      orders: orders.map(formatOrder),
+      orders: orders.map((o: any) => ({ ...formatOrder(o), nextStatuses: nextStatuses(o, currentUser) })),
       meta: {
         page,
         limit,
@@ -303,10 +327,11 @@ export class OrderService {
     if (!(await isOrderVisibleToUser(order, currentUser))) {
       throw new AppError('Access forbidden for this order.', 403);
     }
-    return formatOrder(order);
+    return { ...formatOrder(order), nextStatuses: nextStatuses(order, currentUser) };
   }
 
-  static async createOrder(payload: any, currentUser?: any) {
+  static async createOrder(rawPayload: any, currentUser?: any) {
+    const payload = await enforceOrderOwner(rawPayload, currentUser);
     let orderNumber = payload.orderNumber || payload.id;
     if (!orderNumber || !String(orderNumber).startsWith('#')) {
       let isUnique = false;
@@ -346,7 +371,7 @@ export class OrderService {
     const staffOrder = isStaff(currentUser);
     // Customer orders are priced on the server (fees, tax and coupon come from settings and the coupon table).
     // Staff may enter a custom total, but it must still be present and valid.
-    const priced = staffOrder ? null : await priceCustomerOrder(payload, paymentMethod);
+    const priced = staffOrder ? null : await priceCustomerOrder(payload, paymentMethod, TYPE_ALIASES[payload.type] || payload.type || 'Installation');
     if (staffOrder && !hasExplicitTotal && !hasPrice) throw new AppError('Order total is required.', 400);
     const numericTotal = priced ? priced.totalAmount : hasExplicitTotal ? Number(payload.totalAmount) : parsedFromPrice;
     if (!(numericTotal >= 0)) throw new AppError('Order total must be zero or more.', 400);
@@ -448,7 +473,13 @@ export class OrderService {
       throw new AppError('Access forbidden for updating this order.', 403);
     }
 
-    if (!isStaff(currentUser)) {
+    if (isFieldUser(currentUser)) {
+      // Installers and photographers only move an order along its field workflow (see order.workflow.ts).
+      const note = assertFieldStatusChange(order, payload);
+      const stamp = new Date().toLocaleDateString('en-GB');
+      if (note) order.notes = [order.notes, `[${stamp}] ${payload.status}: ${note}`].filter(Boolean).join('\n');
+      payload = { status: payload.status };
+    } else if (!isStaff(currentUser)) {
       payload = { ...payload };
       // Ignored (not rejected) so full-object edit forms keep working.
       for (const k of MONEY_FIELDS) delete payload[k];
@@ -502,7 +533,7 @@ export class OrderService {
         referenceId: order.orderNumber,
       });
     }
-    return formatOrder(order.toObject());
+    return { ...formatOrder(order.toObject()), nextStatuses: nextStatuses(order, currentUser) };
   }
 
   static async assignInstaller(

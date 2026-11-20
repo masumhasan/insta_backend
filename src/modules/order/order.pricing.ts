@@ -1,5 +1,6 @@
 import { AppSetting } from '../ops/ops.model';
 import { Coupon } from '../catalog/coupon.model';
+import { ServiceItem } from '../catalog/service.model';
 import { AppError } from '../../utils/apiError';
 
 /** Business rates. Stored in the `pricing` app setting (editable by staff); these are only the starting values. */
@@ -55,10 +56,30 @@ export async function couponDiscount(code: unknown, subtotal: number): Promise<n
   return coupon.discountType === 'percentage' ? money((subtotal * value) / 100) : value;
 }
 
+/** Catalog service categories that set the cheapest allowed base price for each order type. */
+const FLOOR_CATEGORIES: Record<string, string[]> = {
+  Installation: ['Installation'],
+  Removal: ['Removal'],
+  'For Sale Directionals': ['Directionals'],
+  'Open House Services': ['Directionals'],
+  'Sign Change': ['For Sale Signs', 'Service'],
+};
+
+/** A customer cannot send a subtotal below the cheapest catalog service for that order type (the catalog is the price list). */
+async function assertAboveCatalogFloor(orderType: string, subtotal: number) {
+  const categories = FLOOR_CATEGORIES[orderType];
+  if (!categories) return;
+  const [cheapest] = await ServiceItem.find({ type: 'service', category: { $in: categories }, price: { $gt: 0 } }).sort({ price: 1 }).limit(1).lean();
+  if (cheapest && subtotal + 0.005 < Number(cheapest.price)) {
+    throw new AppError(`The subtotal is below the catalog price for this service ($${cheapest.price}).`, 400);
+  }
+}
+
 /** Totals for a customer order (agent, assistant, team lead, warehouse). Staff may still enter custom totals. */
-export async function priceCustomerOrder(payload: any, paymentMethod: string): Promise<OrderTotals> {
+export async function priceCustomerOrder(payload: any, paymentMethod: string, orderType = ''): Promise<OrderTotals> {
   const subtotal = Number(payload.subtotal);
   if (!Number.isFinite(subtotal) || subtotal < 0) throw new AppError('Order subtotal is required.', 400);
+  await assertAboveCatalogFloor(orderType, subtotal);
   const cfg = await getPricingConfig();
   const discountAmount = await couponDiscount(payload.couponCode, subtotal);
   return computeTotals(

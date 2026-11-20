@@ -79,6 +79,15 @@ export class CatalogService {
   }
 
   // Packages
+  /** Packages saved before categories existed are filed by their title, the way the old tabs did. */
+  private static packageCategory(p: any): string {
+    if (p.category) return p.category;
+    const t = String(p.title || '').toLowerCase();
+    if (t.includes('open house')) return 'open_house';
+    if (t.includes('for sale') || t.includes('directional')) return 'for_sale';
+    return 'media';
+  }
+
   static async getPackages() {
     const packages = await Package.find().sort({ createdAt: -1 }).lean();
     return packages.map((p: any) => ({
@@ -89,10 +98,12 @@ export class CatalogService {
       publicId: p.publicId || '',
       image: p.imageUrl || p.image || '',
       description: p.description || '',
+      category: CatalogService.packageCategory(p),
       visibility: p.visibility,
       agents: p.agents || [],
       offices: p.offices || [],
       features: p.features || [],
+      linkedServices: p.linkedServices || [],
     }));
   }
 
@@ -100,6 +111,8 @@ export class CatalogService {
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields(payload);
     const data = { ...payload };
     delete data.image;
+    // Older portal builds send "everyone"; the stored value is "all".
+    if (data.visibility === 'everyone') data.visibility = 'all';
     if (hasImageUpdate) {
       data.imageUrl = imageUrl;
       data.publicId = publicId;
@@ -121,6 +134,7 @@ export class CatalogService {
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields(payload);
     const data = { ...payload };
     delete data.image;
+    if (data.visibility === 'everyone') data.visibility = 'all';
     if (hasImageUpdate) {
       data.imageUrl = imageUrl;
       data.publicId = publicId;

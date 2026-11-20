@@ -18,14 +18,16 @@ import {
 
 const router = Router();
 const staffOnly = authorizeRoles(...STAFF_ROLES);
+// Client invoices are for the business and for the customers they were issued to. Installers and the warehouse never need them.
+const invoiceReaders = authorizeRoles(...STAFF_ROLES, 'Agent', 'Team Lead', 'Assistant');
 
 router.use(authenticate);
 
 // Client Invoices (Sign Company -> Invoices -> Client & Admin -> Invoice)
-router.get('/client', getClientInvoices);
+router.get('/client', invoiceReaders, getClientInvoices);
 router.post('/client', staffOnly, createClientInvoice);
-router.get('/client/:id/pdf', downloadClientInvoicePdf);
-router.get('/client/:id', getClientInvoiceById);
+router.get('/client/:id/pdf', invoiceReaders, downloadClientInvoicePdf);
+router.get('/client/:id', invoiceReaders, getClientInvoiceById);
 router.post('/client/:id/pay', staffOnly, recordClientPayment);
 router.post('/client/:id/refund', staffOnly, refundClientInvoice);
 
