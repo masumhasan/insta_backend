@@ -73,12 +73,17 @@ export const getInventoryLabelPdf = asyncHandler(async (req: Request, res: Respo
 });
 
 export const generateInventoryUnits = asyncHandler(async (req: Request, res: Response) => {
-  const { count, addStock } = req.body || {};
-  const data = await InventoryService.generateUnits(String(req.params.id), Number(count), addStock === true || addStock === 'true');
+  const { count, addStock, barcodes } = req.body || {};
+  const data = await InventoryService.generateUnits(String(req.params.id), Number(count), addStock === true || addStock === 'true', barcodes);
   return ApiResponse.success(res, 200, 'Unit barcodes generated successfully', data);
 });
 
 export const updateInventoryUnit = asyncHandler(async (req: Request, res: Response) => {
-  const data = await InventoryService.updateUnit(String(req.params.id), String(req.params.unit), req.body || {});
+  const body = { ...(req.body || {}) };
+  // Field staff record a unit's condition; only staff and the warehouse may relabel it.
+  if (body.barcode !== undefined && !['Admin', 'Sign company', 'Office Manager', 'Warehouse manager'].includes((req as any).user?.role)) {
+    delete body.barcode;
+  }
+  const data = await InventoryService.updateUnit(String(req.params.id), String(req.params.unit), body);
   return ApiResponse.success(res, 200, 'Unit updated successfully', data);
 });

@@ -46,6 +46,25 @@ const buildUnits = (itemId: string, count: number, startAt = 0) =>
     return { unitId: `${itemId}-${n}`, barcode: `${itemId}-${n}`, status: 'Available', notes: '', updatedAt: new Date().toISOString() };
   });
 
+/**
+ * The sign company's own barcode numbers: trimmed, upper-cased, limited to what a Code-39 label can print, and
+ * refused when already on any item or unit (scanning must find exactly one unit).
+ */
+const cleanOwnBarcodes = async (raw: unknown[]): Promise<string[]> => {
+  const codes = raw.map((b) => String(b ?? '').trim().toUpperCase()).filter(Boolean);
+  if (codes.length > 500) throw new AppError('Add at most 500 barcodes at a time.', 400);
+  const bad = codes.find((c) => c.length > 40 || !/^[A-Z0-9 .$/+%-]+$/.test(c));
+  if (bad) throw new AppError(`"${bad}" cannot be printed as a barcode: use letters, numbers and - . $ / + % (max 40).`, 400);
+  const dup = codes.find((c, i) => codes.indexOf(c) !== i);
+  if (dup) throw new AppError(`Barcode "${dup}" is listed twice.`, 400);
+  const taken = await Inventory.findOne({ $or: [{ barcode: { $in: codes } }, { 'units.barcode': { $in: codes } }] }).lean();
+  if (taken) {
+    const used = codes.find((c) => taken.barcode === c || (taken.units || []).some((u: any) => u.barcode === c));
+    throw new AppError(`Barcode "${used}" is already used by ${taken.product || 'another item'}.`, 409);
+  }
+  return codes;
+};
+
 /** Existing items created before short IDs existed get one on first read. */
 const OFFICE_ROLES = ['Team Lead', 'Office Manager'];
 const SIGN_COMPANY_NAME = /^(instapost|sign\s*company)/i;
@@ -365,18 +384,23 @@ export class InventoryService {
     return formatInventoryItem(existing.toObject(), 0);
   }
 
-  /** Generate individual unit barcodes for an item (adds stock when `addStock` is true). */
-  static async generateUnits(id: string, count: number, addStock = false) {
-    const n = Math.floor(Number(count));
+  /**
+   * Generate individual unit barcodes for an item (adds stock when `addStock` is true).
+   * `barcodes` lets the sign company use its own labels: one unit per barcode instead of generated numbers.
+   */
+  static async generateUnits(id: string, count: number, addStock = false, barcodes?: unknown) {
+    const own = Array.isArray(barcodes) ? await cleanOwnBarcodes(barcodes) : [];
+    const n = own.length || Math.floor(Number(count));
     if (!Number.isFinite(n) || n < 1 || n > 500) throw new AppError('Enter a unit count between 1 and 500.', 400);
     const item = await Inventory.findById(id);
     if (!item) throw new AppError('Inventory item not found.', 404);
     if (!item.itemId) item.itemId = await generateItemId(item.itemType);
 
     const existing = Array.isArray(item.units) ? item.units : [];
-    // Continue numbering after the highest existing suffix so barcodes are never reused.
+    // Continue numbering after the highest existing suffix so unit IDs (and generated barcodes) are never reused.
     const highest = existing.reduce((m, u) => Math.max(m, Number(String(u.unitId || '').split('-').pop()) || 0), 0);
-    item.units = [...existing, ...buildUnits(item.itemId, n, highest)] as any;
+    const units = buildUnits(item.itemId, n, highest).map((u, i) => (own[i] ? { ...u, barcode: own[i] } : u));
+    item.units = [...existing, ...units] as any;
     if (addStock) {
       item.available = (item.available || 0) + n;
       item.total = item.available + (item.installed || 0);
@@ -386,11 +410,15 @@ export class InventoryService {
   }
 
   /** Record the condition of one specific unit (installed / missing / damaged / needs repair …). */
-  static async updateUnit(id: string, unitBarcode: string, payload: { status?: string; notes?: string }) {
+  static async updateUnit(id: string, unitBarcode: string, payload: { status?: string; notes?: string; barcode?: string }) {
     const item = await findInventoryDoc(id);
     if (!item) throw new AppError('Inventory item not found.', 404);
     const unit: any = (item.units || []).find((u) => u.barcode === unitBarcode || u.unitId === unitBarcode);
     if (!unit) throw new AppError('Unit not found on this item.', 404);
+
+    if (payload.barcode !== undefined && String(payload.barcode).trim().toUpperCase() !== unit.barcode) {
+      [unit.barcode] = await cleanOwnBarcodes([payload.barcode]);
+    }
 
     if (payload.status !== undefined) {
       if (!(UNIT_STATUSES as readonly string[]).includes(payload.status)) {

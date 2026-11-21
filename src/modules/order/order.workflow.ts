@@ -42,6 +42,16 @@ const NEEDS_VERIFIED_PULL = ['Installed', 'Completed'];
 const NEEDS_REASON = ['On Hold', 'Delayed by Weather'];
 
 /** The statuses this user may move the order to right now (empty for roles that are not field staff). */
+/**
+ * Queue status of a new or unassigned order, matching the TABLES above: installs go up, removals come down,
+ * every other type is a single visit with no direction.
+ */
+export const pendingStatusFor = (type: string): string =>
+  type === 'Installation' ? 'Pending Up' : type === 'Removal' ? 'Pending Down' : 'Pending';
+
+/** Status once a technician is assigned ("Assigned Up" / "Assigned Down" / "Assigned"). */
+export const assignedStatusFor = (type: string): string => pendingStatusFor(type).replace('Pending', 'Assigned');
+
 export const nextStatuses = (order: any, user?: { role?: string }): string[] =>
   isFieldUser(user) ? TABLES[order?.type]?.[order?.status] ?? [] : [];
 

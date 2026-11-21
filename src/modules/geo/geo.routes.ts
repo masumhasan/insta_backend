@@ -48,7 +48,30 @@ router.get(
 
     let data: Suggestion[];
     try {
-      data = (await photonSearch(q, 6, '&lat=32.78&lon=-96.8')).map(toSuggestion).filter(Boolean) as Suggestion[];
+      const usOnly = (s: Suggestion | null): s is Suggestion => !!s && /united states|^usa?$/i.test(s.country);
+      data = (await photonSearch(q, 6, '&lat=32.78&lon=-96.8')).map(toSuggestion).filter(usOnly);
+      // OpenStreetMap often lacks house numbers, so "5800 Legacy Dr Plano" may only match the street. Look the street
+      // up without the number and put the typed number back in front. A street must contain the typed street name
+      // (the provider's fuzzy matching otherwise offers unrelated streets).
+      const numbered = q.match(/^(\d+[a-z]?)\s+(.{3,})$/i);
+      if (numbered) {
+        const [, num, rest] = numbered;
+        const nameWord = (rest.match(/[a-z]{3,}/i)?.[0] || '').toLowerCase();
+        const exact = data.filter((s) => s.street.startsWith(`${num} `));
+        // Only when no house-level match exists; a failed street lookup must not drop the exact matches.
+        const streets = exact.length
+          ? []
+          : (await photonSearch(rest, 6, '&lat=32.78&lon=-96.8&osm_tag=highway').catch(() => []))
+              .map(toSuggestion)
+              .filter(usOnly)
+              .filter((s) => !/^\d/.test(s.street) && s.street.toLowerCase().includes(nameWord))
+              .map((s) => {
+                const street = `${num} ${s.street}`;
+                return { ...s, street, label: s.label.replace(s.street, street) };
+              });
+        data = [...exact, ...streets];
+      }
+      data = data.filter((s, i, all) => all.findIndex((x) => x.label === s.label) === i).slice(0, 8);
     } catch {
       // Provider hiccup: answer empty but do not cache it.
       return ApiResponse.success(res, 200, 'Suggestions', []);

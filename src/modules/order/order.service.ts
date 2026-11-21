@@ -6,7 +6,7 @@ import { AppError } from '../../utils/apiError';
 import { assertNoBase64 } from '../../utils/imageGuard';
 import { isStaff } from '../../middlewares/roleGuard.middleware';
 import { priceCustomerOrder } from './order.pricing';
-import { assertFieldStatusChange, isFieldUser, nextStatuses } from './order.workflow';
+import { assertFieldStatusChange, assignedStatusFor, isFieldUser, nextStatuses, pendingStatusFor } from './order.workflow';
 import { Coupon } from '../catalog/coupon.model';
 
 /** Money and payment fields: only staff may set or change them after an order exists. */
@@ -92,6 +92,26 @@ const enforceOrderOwner = async (payload: any, currentUser?: any) => {
 };
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * A removal order moves the install it removes along automatically: placing the removal puts an "Installed" sign
+ * into "Pending Down", and marking the removal "Removed" (or "Completed") marks the install "Removed".
+ */
+const syncInstallFromRemoval = async (removal: any) => {
+  if (removal?.type !== 'Removal') return;
+  const ref = String(removal.specifications?.existingOrderId || removal.specifications?.existingOrderNumber || '');
+  if (!ref) return;
+  const install = await Order.findOne({
+    type: 'Installation',
+    $or: [{ _id: /^[0-9a-fA-F]{24}$/.test(ref) ? ref : null }, { orderNumber: ref }],
+  });
+  if (!install) return;
+  const next = ['Removed', 'Completed'].includes(removal.status) ? 'Removed' : install.status === 'Installed' ? 'Pending Down' : '';
+  if (next && install.status !== next) {
+    install.status = next;
+    await install.save();
+  }
+};
 
 const formatCurrencyPrice = (rawPrice: any, totalAmount?: any): string => {
   const numericFromPrice = Number(String(rawPrice ?? '').replace(/[^0-9.-]/g, ''));
@@ -430,7 +450,11 @@ export class OrderService {
       appointmentTime: payload.appointmentTime || '',
       onsiteDuration: Number(payload.onsiteDuration) || 60,
       notes: String(payload.notes || '').trim(),
-      status: payload.status || (payload.type === 'Media Services' ? 'Pending' : 'Pending Up'),
+      // A plain "pending" from the order forms becomes the queue status for this type (see order.workflow.ts).
+      status:
+        !payload.status || /^pending( up| down)?$/i.test(String(payload.status))
+          ? pendingStatusFor(TYPE_ALIASES[payload.type] || payload.type || 'Installation')
+          : payload.status,
       installerName: payload.installerName || '',
       installerEmail: payload.installerEmail || '',
       installerId: payload.installerId || '',
@@ -438,6 +462,8 @@ export class OrderService {
       pullList,
       specifications: { ...(payload.specifications || {}), ...geoSpecs },
     });
+
+    await syncInstallFromRemoval(order);
 
     if (priced && priced.discountAmount > 0 && payload.couponCode) {
       await Coupon.updateOne({ code: String(payload.couponCode).trim().toUpperCase() }, { $inc: { usageCount: 1 } });
@@ -523,6 +549,7 @@ export class OrderService {
     }
 
     await order.save();
+    if (payload.status && payload.status !== prevStatus) await syncInstallFromRemoval(order);
     if (payload.status && payload.status !== prevStatus) {
       const { NotificationService } = await import('../notification/notification.service');
       await NotificationService.safeNotify({
@@ -550,9 +577,7 @@ export class OrderService {
       order.installerName = '';
       order.installerEmail = '';
       order.installerId = '';
-      if (/^assigned/i.test(order.status)) {
-        order.status = order.status.includes('Up') ? 'Pending Up' : order.status.includes('Down') ? 'Pending Down' : 'Pending';
-      }
+      if (/^assigned/i.test(order.status)) order.status = pendingStatusFor(order.type);
       await order.save();
       return { id: order.orderNumber, status: order.status, installerName: '' };
     }
@@ -561,13 +586,8 @@ export class OrderService {
     order.installerEmail = String(installer.email || '').toLowerCase();
     order.installerId = installer.id || '';
 
-    if (order.status.includes('Up')) {
-      order.status = 'Assigned Up';
-    } else if (order.status.includes('Down')) {
-      order.status = 'Assigned Down';
-    } else {
-      order.status = 'Assigned';
-    }
+    // By type, not by the old status text, so orders created with the wrong direction still reach the field workflow.
+    order.status = assignedStatusFor(order.type);
 
     await order.save();
     const { NotificationService } = await import('../notification/notification.service');
