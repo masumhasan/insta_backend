@@ -5,24 +5,30 @@ type Item = {
   id: string; product: string; itemType: string; size: string; available: number; installed: number;
   owner?: 'sign' | 'agent' | 'office'; ownerIdx?: number; price?: string; rental?: string; install?: string; removal?: string;
   units?: string[]; location?: string; extra?: Record<string, any>;
+  /** Post types (Sign post product names) a panel / rider fits, and rider ply. */
+  fits?: string[]; ply?: string; sn?: string;
 };
+
+const BLACK_POST = 'Premium Black Sign Post (6 ft)';
+const STEEL_POST = 'Steel Frame Sign Post (3 ft)';
+const WHITE_POST = 'White Textured Sign Post (7 ft)';
 
 // Stock in every state: healthy, low, out of stock; units that are missing, damaged or need repair.
 const ITEMS: Item[] = [
   { id: 'SC-0001', product: 'Premium Black Sign Post (6 ft)', itemType: 'Sign post', size: '6 ft', available: 24, installed: 11, price: '$42.00', install: '$45.00', removal: '$25.00', units: ['Available', 'Available', 'Installed', 'Installed'], location: 'Warehouse-1 (Aisle 1)', extra: { color: 'Black', material: 'PVC', postHeight: '6 ft' } },
   { id: 'SC-0002', product: 'Steel Frame Sign Post (3 ft)', itemType: 'Sign post', size: '3 ft', available: 2, installed: 14, price: '$38.00', install: '$40.00', removal: '$25.00', units: ['Available', 'Missing', 'Installed'], location: 'Warehouse-1 (Aisle 1)', extra: { material: 'Steel' } },
   { id: 'SC-0003', product: 'White Textured Sign Post (7 ft)', itemType: 'Sign post', size: '7 ft', available: 0, installed: 9, price: '$46.00', install: '$50.00', removal: '$25.00', units: ['Installed', 'Installed', 'Damaged'], location: 'Warehouse-1 (Aisle 2)' },
-  { id: 'SC-0004', product: 'SOLD Rider 24x6', itemType: 'Rider', size: '24" x 6"', available: 30, installed: 12, price: '$12.00', rental: '$5.00', units: ['Available', 'Installed', 'Needs Repair'], location: 'Warehouse-1 (Bin R1)', extra: { riderHeading: 'SOLD', material: 'PVC' } },
-  { id: 'SC-0005', product: 'OPEN HOUSE Rider 24x6', itemType: 'Rider', size: '24" x 6"', available: 3, installed: 6, price: '$12.00', rental: '$5.00', location: 'Warehouse-1 (Bin R2)', extra: { riderHeading: 'OPEN HOUSE' } },
-  { id: 'SC-0006', product: 'PENDING Rider 24x6', itemType: 'Rider', size: '24" x 6"', available: 0, installed: 4, price: '$12.00', rental: '$5.00', location: 'Warehouse-1 (Bin R3)', extra: { riderHeading: 'PENDING' } },
-  { id: 'SC-0007', product: 'Standard Agent Panel 24x30', itemType: 'Main Panel', size: '24" x 30"', available: 18, installed: 7, price: '$55.00', rental: '$10.00', units: ['Available', 'Installed'], location: 'Warehouse-1 (Rack P1)', extra: { material: 'ABS', mountType: 'Top Mount' } },
-  { id: 'SC-0008', product: 'Combination Lockbox', itemType: 'Lockbox', size: 'Standard', available: 12, installed: 5, price: '$30.00', rental: '$6.00', units: ['Available', 'Installed'], location: 'Warehouse-1 (Cabinet L)', extra: { lockboxType: 'Combination' } },
+  { id: 'SC-0004', product: 'SOLD Rider 24x6', itemType: 'Rider', size: '24" x 6"', available: 30, installed: 12, price: '$12.00', rental: '$5.00', units: ['Available', 'Installed', 'Needs Repair'], location: 'Warehouse-1 (Bin R1)', extra: { riderHeading: 'SOLD', material: 'PVC', mountType: 'Hanging (hooks)' }, fits: [BLACK_POST, WHITE_POST], ply: 'Double Ply' },
+  { id: 'SC-0005', product: 'OPEN HOUSE Rider 24x6', itemType: 'Rider', size: '24" x 6"', available: 3, installed: 6, price: '$12.00', rental: '$5.00', location: 'Warehouse-1 (Bin R2)', extra: { riderHeading: 'OPEN HOUSE', mountType: 'Slider / frame' }, fits: [STEEL_POST], ply: 'Single Ply' },
+  { id: 'SC-0006', product: 'PENDING Rider 24x6', itemType: 'Rider', size: '24" x 6"', available: 0, installed: 4, price: '$12.00', rental: '$5.00', location: 'Warehouse-1 (Bin R3)', extra: { riderHeading: 'PENDING', mountType: 'Hanging or frame' }, fits: [BLACK_POST, STEEL_POST, WHITE_POST], ply: 'Double Ply' },
+  { id: 'SC-0007', product: 'Standard Agent Panel 24x30', itemType: 'Main Panel', size: '24" x 30"', available: 18, installed: 7, price: '$55.00', rental: '$10.00', units: ['Available', 'Installed'], location: 'Warehouse-1 (Rack P1)', extra: { material: 'ABS', mountType: 'Top Mount' }, fits: [BLACK_POST, WHITE_POST] },
+  { id: 'SC-0008', product: 'Combination Lockbox', itemType: 'Lockbox', size: 'Standard', available: 12, installed: 5, price: '$30.00', rental: '$6.00', units: ['Available', 'Installed'], location: 'Warehouse-1 (Cabinet L)', extra: { lockboxType: 'Combination' }, sn: 'LB-SN-40118' },
   { id: 'SC-0009', product: 'Directional Arrow 18x24', itemType: 'Directional', size: '18" x 24"', available: 40, installed: 10, price: '$9.00', rental: '$4.00', location: 'Warehouse-1 (Bin D1)', extra: { mountType: 'Wire Stake' } },
   { id: 'SC-0010', product: 'Wire Stakes (bundle of 10)', itemType: 'Hardware / Stakes', size: 'Bundle', available: 60, installed: 0, price: '$8.00', location: 'Warehouse-1 (Bin H1)' },
   // Owned by agents and offices (visible only to their owner)
-  { id: 'SC-0011', product: 'Agent-owned Branded Panel 24x30', itemType: 'Main Panel', size: '24" x 30"', available: 4, installed: 2, owner: 'agent', ownerIdx: 0, price: '$60.00', units: ['Available', 'Installed'], location: 'Warehouse-1 (Customer shelf)' },
+  { id: 'SC-0011', product: 'Agent-owned Branded Panel 24x30', itemType: 'Main Panel', size: '24" x 30"', available: 4, installed: 2, owner: 'agent', ownerIdx: 0, price: '$60.00', units: ['Available', 'Installed'], location: 'Warehouse-1 (Customer shelf)', fits: [BLACK_POST] },
   { id: 'SC-0012', product: 'Agent-owned Branded Rider', itemType: 'Rider', size: '24" x 6"', available: 6, installed: 1, owner: 'agent', ownerIdx: 1, price: '$14.00', location: 'Warehouse-1 (Customer shelf)' },
-  { id: 'SC-0013', product: 'Office Branded Panel 24x36', itemType: 'Main Panel', size: '24" x 36"', available: 10, installed: 5, owner: 'office', ownerIdx: 0, price: '$64.00', location: 'Warehouse-1 (Customer shelf)' },
+  { id: 'SC-0013', product: 'Office Branded Panel 24x36', itemType: 'Main Panel', size: '24" x 36"', available: 10, installed: 5, owner: 'office', ownerIdx: 0, price: '$64.00', location: 'Warehouse-1 (Customer shelf)', fits: [STEEL_POST, 'Office Branded Sign Post'] },
   { id: 'SC-0014', product: 'Office Branded Sign Post', itemType: 'Sign post', size: '6 ft', available: 8, installed: 3, owner: 'office', ownerIdx: 0, price: '$44.00', install: '$45.00', location: 'Warehouse-1 (Customer shelf)' },
 ];
 
@@ -85,6 +91,8 @@ export async function seedInventory(people: People) {
           additionalSpecs: `seed:${TAG}`,
           ...(it.extra || {}),
         },
+        // New fields are also set on items seeded before they existed.
+        $set: { compatiblePostTypes: it.fits || [], postType: it.fits?.[0] || '', ply: it.ply || '', ...(it.sn ? { serialNo: it.sn } : {}) },
       },
       { upsert: true }
     );

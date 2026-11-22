@@ -65,6 +65,17 @@ export interface IOrderDocument extends Document {
     createdAt: string;
   }[];
   events?: { type: string; at: Date }[];
+  /** Stripe card charges. `attempts` only grows after a decline, so a retried attempt reuses its idempotency key. */
+  payment?: {
+    /** Customer who placed and pays for the order (e.g. a Team Lead ordering for an agent). */
+    payerId?: string;
+    attempts?: number;
+    lockedAt?: Date | null;
+    intentId?: string;
+    paidAt?: Date;
+    card?: { brand?: string; last4?: string };
+    lastError?: { message?: string; code?: string; at?: Date };
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -142,6 +153,7 @@ const orderSchema = new Schema<IOrderDocument>(
         _id: false,
       },
     ],
+    payment: { type: Schema.Types.Mixed, default: undefined },
   },
   { timestamps: true }
 );

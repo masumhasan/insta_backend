@@ -3,6 +3,7 @@ import { authenticate } from '../../middlewares/auth.middleware';
 import { authorizeRoles, STAFF_ROLES } from '../../middlewares/roleGuard.middleware';
 import {
   getInventory,
+  getInventoryItem,
   createInventoryItem,
   updateInventoryItem,
   deleteInventoryItem,
@@ -31,6 +32,7 @@ router.post('/returns', fieldTeam, createReturn);
 router.patch('/returns/:id', stockWriters, processQueueItem);
 router.post('/import-csv', stockWriters, importInventoryCsv);
 router.post('/', stockWriters, createInventoryItem);
+router.get('/:id', getInventoryItem);
 router.get('/:id/qr', getInventoryQr);
 router.get('/:id/qr-svg', getInventoryQrSvg);
 router.get('/:id/label-pdf', getInventoryLabelPdf);

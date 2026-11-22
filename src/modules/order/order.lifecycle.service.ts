@@ -1,5 +1,6 @@
 import { Order } from './order.model';
 import { Inventory } from '../inventory/inventory.model';
+import { codeLookupFilter } from '../inventory/inventory.codes';
 import { NotificationService } from '../notification/notification.service';
 import { AppError } from '../../utils/apiError';
 import { isOrderVisibleToUser } from './order.service';
@@ -262,12 +263,13 @@ export class OrderLifecycleService {
     const clean = String(code || '').trim();
     if (!clean) throw new AppError('Scan or type a barcode.', 400);
 
-    const exact = new RegExp('^' + clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
-    const inv: any = await Inventory.findOne({ $or: [{ itemId: exact }, { barcode: exact }, { 'units.barcode': exact }] }).lean();
+    // Matches current, custom and legacy codes (PST-0042, PST-0042-07, the sign company's own number, BAR-123456 …).
+    const inv: any = await Inventory.findOne(codeLookupFilter(clean)).lean();
     if (!inv) throw new AppError(`No inventory item has the barcode "${clean}".`, 404);
 
+    const invIds = [inv.itemId, ...(inv.legacyCodes || [])].filter(Boolean).map((c: string) => String(c).toLowerCase());
     const same = (i: any) =>
-      (i.itemId && inv.itemId && String(i.itemId).toLowerCase() === String(inv.itemId).toLowerCase()) ||
+      (i.itemId && invIds.includes(String(i.itemId).toLowerCase())) ||
       String(i.product || '').trim().toLowerCase() === String(inv.product || '').trim().toLowerCase();
     const list: any[] = order.pullList || [];
     const target = list.find((i) => !i.checked && same(i));

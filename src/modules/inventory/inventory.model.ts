@@ -11,8 +11,14 @@ export interface IInventoryHistoryEntry {
 }
 
 export interface IInventoryUnit {
+  /** Generated unit code, e.g. PST-0042-07. */
   unitId: string;
+  /** Code printed on the label: the custom barcode when set, else `unitId`. */
   barcode: string;
+  /** The sign company's own barcode for this unit (optional). */
+  customBarcode?: string;
+  /** Older codes that still scan (e.g. PST-0042-001). */
+  legacyCodes?: string[];
   status: string;
   notes?: string;
   updatedAt?: string;
@@ -28,11 +34,21 @@ export interface IInventoryDocument extends Document {
   itemId?: string;
   ownerType?: "Agent" | "Office" | "Sign company";
   ownerId?: string;
+  /** Legacy single post type; kept equal to `compatiblePostTypes[0]`. */
   postType?: string;
+  /** Post types (Sign post item names) this main panel / rider can be mounted on. Empty = not restricted. */
+  compatiblePostTypes?: string[];
+  /** Rider thickness. */
+  ply?: string;
   ownerLinkChecked?: boolean;
   units?: IInventoryUnit[];
   office?: string;
+  /** Code printed on the item label: `customBarcode` when set, else `itemId`. */
   barcode?: string;
+  /** The sign company's own barcode for this item (optional). */
+  customBarcode?: string;
+  /** Older codes that still scan (e.g. BAR-123456). */
+  legacyCodes?: string[];
   available: number;
   installed: number;
   total: number;
@@ -79,6 +95,8 @@ const inventorySchema = new Schema<IInventoryDocument>(
     assignedAgentId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     office: { type: String, default: '' },
     barcode: { type: String, default: '', index: true },
+    customBarcode: { type: String, default: '', trim: true },
+    legacyCodes: { type: [String], default: [], index: true },
     available: { type: Number, required: true, default: 0 },
     installed: { type: Number, required: true, default: 0 },
     total: { type: Number, required: true, default: 0 },
@@ -113,11 +131,15 @@ const inventorySchema = new Schema<IInventoryDocument>(
     ownerType: { type: String, enum: ['Agent', 'Office', 'Sign company'], default: 'Sign company' },
     ownerId: { type: String, default: '', index: true },
     postType: { type: String, default: '' },
+    compatiblePostTypes: { type: [String], default: [] },
+    ply: { type: String, enum: ['', 'Single Ply', 'Double Ply'], default: '' },
     ownerLinkChecked: { type: Boolean, default: false },
     units: [
       {
         unitId: { type: String },
         barcode: { type: String, index: true },
+        customBarcode: { type: String, default: '' },
+        legacyCodes: { type: [String], default: [] },
         status: { type: String, default: 'Available' },
         notes: { type: String, default: '' },
         updatedAt: { type: String, default: '' },

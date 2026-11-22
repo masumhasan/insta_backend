@@ -19,6 +19,23 @@ const findClientInvoiceOrThrow = async (id: string) => {
 
 const CUSTOMER_ROLES = ['Agent', 'Team Lead', 'Assistant'];
 
+/**
+ * Invoice lines for an order. A New Sign Install with post setups gets one line per post (its install fee and
+ * items), then one line for the rest (lockbox, add-ons, rush, fees, tax, discount) so the lines add up to the price.
+ */
+const orderLineItems = (order: any, price: number, orderNum: string) => {
+  const setups: any[] = Array.isArray(order.specifications?.postSetups) ? order.specifications.postSetups : [];
+  const single = [{ label: `${order.type || 'Service'} — ${order.address || orderNum}`, quantity: 1, unitPrice: price, total: price }];
+  if (!setups.length || !setups.every((s) => Number.isFinite(Number(s?.total)))) return single;
+  const lines = setups.map((s, i) => {
+    const t = Number(s.total) || 0;
+    return { label: `Post ${i + 1} install — ${s.postLabel || s.postName || 'Sign post'}`, quantity: 1, unitPrice: t, total: t };
+  });
+  const rest = Number((price - lines.reduce((sum, l) => sum + l.total, 0)).toFixed(2));
+  if (Math.abs(rest) >= 0.01) lines.push({ label: 'Lockbox, add-ons, fees, tax & discounts', quantity: 1, unitPrice: rest, total: rest });
+  return lines;
+};
+
 /** Customers see the invoices of the orders they can see (same rule as orders), plus any invoice made out to them. */
 const assertInvoiceVisible = async (doc: any, user?: any) => {
   if (!user || !CUSTOMER_ROLES.includes(user.role)) return;
@@ -170,7 +187,7 @@ export class ClientInvoiceService {
         price,
         payment: order.paymentStatus === 'Paid' ? 'Paid' : 'Unpaid',
         paymentMethod: order.paymentMethod || '',
-        lineItems: [{ label: `${order.type || 'Service'} — ${order.address || orderNum}`, quantity: 1, unitPrice: price, total: price }],
+        lineItems: orderLineItems(order, price, orderNum),
       });
     } catch {
       // Non-blocking sync so order placement never fails

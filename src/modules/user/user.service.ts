@@ -46,14 +46,11 @@ export class UserService {
       filter.status = { $nin: ['pending_approval', 'pending', 'Pending', 'rejected'] };
     }
 
-    if (query.searchQuery && query.searchQuery.trim() !== '') {
-      const term = query.searchQuery.trim();
-      filter.$or = [
-        { name: { $regex: term, $options: 'i' } },
-        { email: { $regex: term, $options: 'i' } },
-        { phone: { $regex: term, $options: 'i' } },
-        { company: { $regex: term, $options: 'i' } },
-      ];
+    const searchTerm = String(query.searchQuery ?? '').trim();
+    if (searchTerm) {
+      // Escaped so typed "(" or "+" match literally; the "Order for Agent or Office" picker searches here.
+      const rx = { $regex: searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+      filter.$or = ['name', 'email', 'phone', 'company', 'office', 'brokerage', 'crm.brokerage'].map((f) => ({ [f]: rx }));
     }
 
     const [total, users] = await Promise.all([

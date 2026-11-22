@@ -50,7 +50,7 @@ async function main() {
     ...[
       ['GET', '/users'], ['GET', '/admin/users'], ['GET', '/catalog/packages'], ['GET', '/catalog/items/service'], ['GET', '/catalog/coupons'],
       ['GET', '/inventory'], ['GET', '/inventory/returns'], ['GET', '/invoices/client'], ['GET', '/invoices/technicians'], ['GET', '/notifications'],
-      ['GET', '/ops/settings/pricing'], ['GET', '/ops/media-tasks'], ['GET', '/orders'], ['GET', '/orders/pricing'], ['GET', '/geo/autocomplete?q=dallas'],
+      ['GET', '/ops/settings/pricing'], ['GET', '/ops/media-tasks'], ['GET', '/ops/reviews'], ['GET', '/orders'], ['GET', '/orders/pricing'], ['GET', '/geo/autocomplete?q=dallas'],
     ].map(([method, path]) => ({ who: 'nobody', method, path, expect: 401 }) as Case),
     { who: 'nobody', method: 'POST', path: '/users', body: { name: 'guardtest', email: 'guardtest+a@example.com', role: 'Admin', password: 'GuardTest#1234' }, expect: 401 },
     { who: 'nobody', method: 'PATCH', path: `/users/${admin?.id || NOBODY}`, body: { role: 'Admin' }, expect: 401 },
@@ -65,6 +65,8 @@ async function main() {
     { who: 'nobody', method: 'GET', path: '/catalog/items/faq', expect: 200 },
     { who: 'nobody', method: 'GET', path: '/ops/settings/contact_us', expect: 200 },
     { who: 'nobody', method: 'GET', path: '/ops/settings/privacy_policy', expect: 200 },
+    { who: 'nobody', method: 'GET', path: '/ops/reviews/public', expect: 200 },
+    { who: 'nobody', method: 'POST', path: '/ops/reviews', body: { reviewerName: 'guardtest', text: 'x', rating: 5 }, expect: 401 },
     { who: 'nobody', method: 'POST', path: '/notifications', body: { title: '', message: '' }, expect: 400, note: 'public contact form, empty body rejected' },
     // ---- agent: own data only, cannot escalate or touch business data
     { who: 'Agent', method: 'GET', path: '/orders/pricing', expect: 200 },
@@ -74,6 +76,8 @@ async function main() {
     { who: 'Agent', method: 'POST', path: '/catalog/items', body: { type: 'faq', name: 'guardtest', price: 0 }, expect: 403 },
     { who: 'Agent', method: 'DELETE', path: `/catalog/packages/${NOBODY}`, expect: 403 },
     { who: 'Agent', method: 'PUT', path: '/ops/settings/guardtest', body: { value: 1 }, expect: 403 },
+    { who: 'Agent', method: 'POST', path: '/ops/reviews', body: { reviewerName: 'guardtest', text: 'x', rating: 5 }, expect: 403 },
+    { who: 'Agent', method: 'GET', path: '/ops/reviews', expect: 403 },
     { who: 'Agent', method: 'POST', path: `/invoices/client/${NOBODY}/refund`, body: { type: 'full', amount: 1 }, expect: 403 },
     { who: 'Agent', method: 'GET', path: '/invoices/technicians', expect: 403 },
     { who: 'Agent', method: 'PATCH', path: `/inventory/${NOBODY}`, body: {}, expect: 403 },
@@ -98,6 +102,16 @@ async function main() {
     { who: 'Admin', method: 'GET', path: '/invoices/technicians', expect: 200 },
     { who: 'Admin', method: 'GET', path: '/catalog/packages', expect: 200 },
     { who: 'Admin', method: 'GET', path: '/orders/pricing', expect: 200 },
+    // ---- card payments (Stripe): 503 is fine when STRIPE_SECRET_KEY is not set
+    { who: 'nobody', method: 'GET', path: '/payments/cards', expect: 401 },
+    { who: 'nobody', method: 'POST', path: `/payments/orders/${NOBODY}/charge`, body: { paymentMethodId: 'pm_guardtest' }, expect: 401 },
+    { who: 'Installer', method: 'GET', path: '/payments/cards', expect: 403 },
+    { who: 'Warehouse manager', method: 'POST', path: `/payments/orders/${NOBODY}/charge`, body: { paymentMethodId: 'pm_guardtest' }, expect: 403 },
+    { who: 'Agent', method: 'GET', path: '/payments/config', expect: 200 },
+    { who: 'Agent', method: 'GET', path: '/payments/cards', expect: [200, 503] },
+    { who: 'Agent', method: 'GET', path: `/payments/cards?userId=${admin?.id || NOBODY}`, expect: [403, 503], note: "cannot read another user's cards" },
+    { who: 'Agent', method: 'POST', path: `/payments/orders/${NOBODY}/charge`, body: { paymentMethodId: 'pm_guardtest' }, expect: [404, 503] },
+    { who: 'Admin', method: 'GET', path: `/payments/orders/${NOBODY}/cards`, expect: [404, 503] },
   ];
 
   try {

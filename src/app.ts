@@ -20,6 +20,7 @@ import { opsRoutes } from './modules/ops/ops.routes';
 import { invoiceRoutes } from './modules/invoice/invoice.routes';
 import { favoriteRoutes } from './modules/favorite/favorite.routes';
 import { geoRoutes } from './modules/geo/geo.routes';
+import { paymentRoutes } from './modules/payment/payment.routes';
 
 const app: Application = express();
 
@@ -122,6 +123,9 @@ app.use('/favorites', favoriteRoutes);
 app.use('/api/v1/favorites', favoriteRoutes);
 app.use('/geo', geoRoutes);
 app.use('/api/v1/geo', geoRoutes);
+// Stripe card payments (saved cards, charging orders). Answers 503 when STRIPE_SECRET_KEY is not set.
+app.use('/payments', paymentRoutes);
+app.use('/api/v1/payments', paymentRoutes);
 
 // Centralized error and 404 handlers
 app.use(notFoundHandler);

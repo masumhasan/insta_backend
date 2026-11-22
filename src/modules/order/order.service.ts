@@ -6,8 +6,10 @@ import { AppError } from '../../utils/apiError';
 import { assertNoBase64 } from '../../utils/imageGuard';
 import { isStaff } from '../../middlewares/roleGuard.middleware';
 import { priceCustomerOrder } from './order.pricing';
+import { legacyPostKeys, priceInstallExtras, resolvePostSetups } from './order.postSetups';
 import { assertFieldStatusChange, assignedStatusFor, isFieldUser, nextStatuses, pendingStatusFor } from './order.workflow';
 import { Coupon } from '../catalog/coupon.model';
+import { isStripeConfigured } from '../payment/stripe.client';
 
 /** Money and payment fields: only staff may set or change them after an order exists. */
 const MONEY_FIELDS = ['totalAmount', 'price', 'subtotal', 'discountAmount', 'rushFee', 'taxAmount', 'paymentStatus', 'paymentMethod'];
@@ -389,6 +391,14 @@ export class OrderService {
     const hasPrice = Number.isFinite(parsedFromPrice) && String(payload.price || '').trim() !== '';
     const paymentMethod = payload.paymentMethod === 'invoice' ? 'invoice' : payload.paymentMethod || 'credit_card';
     const staffOrder = isStaff(currentUser);
+    // New Sign Install with 1–3 post setups: each post is checked against inventory and priced here (its own
+    // install fee + its panel/riders). For customers the subtotal is rebuilt from the setups, lockbox and add-ons.
+    const specsIn = payload.specifications && typeof payload.specifications === 'object' ? payload.specifications : {};
+    if (specsIn.postSetups !== undefined) {
+      const { setups, subtotal: postsSubtotal } = await resolvePostSetups(specsIn.postSetups, currentUser);
+      payload.specifications = { ...specsIn, postSetups: setups, ...legacyPostKeys(setups) };
+      if (!staffOrder) payload.subtotal = Number((postsSubtotal + (await priceInstallExtras(specsIn, currentUser))).toFixed(2));
+    }
     // Customer orders are priced on the server (fees, tax and coupon come from settings and the coupon table).
     // Staff may enter a custom total, but it must still be present and valid.
     const priced = staffOrder ? null : await priceCustomerOrder(payload, paymentMethod, TYPE_ALIASES[payload.type] || payload.type || 'Installation');
@@ -444,8 +454,9 @@ export class OrderService {
       rushFee: priced ? priced.rushFee : Number(payload.rushFee) || 0,
       taxAmount: priced ? priced.taxAmount : Number(payload.taxAmount) || 0,
       paymentMethod,
-      // Customers cannot mark their own order paid: card orders are Paid (no processor yet, see CLAUDE.md), invoice orders stay Unpaid.
-      paymentStatus: (staffOrder && payload.paymentStatus) || (paymentMethod === 'invoice' ? 'Unpaid' : 'Paid'),
+      // Customers cannot mark their own order paid. With Stripe on, card orders stay Unpaid until POST /payments/orders/:id/charge succeeds;
+      // without Stripe keys the old behaviour stays (card orders recorded as Paid). Invoice orders stay Unpaid.
+      paymentStatus: (staffOrder && payload.paymentStatus) || (paymentMethod === 'invoice' || isStripeConfigured() ? 'Unpaid' : 'Paid'),
       poNumber: payload.poNumber || '',
       appointmentTime: payload.appointmentTime || '',
       onsiteDuration: Number(payload.onsiteDuration) || 60,
@@ -461,6 +472,8 @@ export class OrderService {
       photos: normalizePhotos(payload.photos || (payload.imageUrl ? [{ imageUrl: payload.imageUrl, publicId: payload.publicId || '' }] : [])),
       pullList,
       specifications: { ...(payload.specifications || {}), ...geoSpecs },
+      // The customer who placed it pays for it with their saved cards (see modules/payment).
+      ...(staffOrder || !currentUser?._id ? {} : { payment: { payerId: String(currentUser._id) } }),
     });
 
     await syncInstallFromRemoval(order);

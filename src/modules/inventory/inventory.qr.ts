@@ -1,45 +1,5 @@
 import QRCode from 'qrcode';
-
-const CODE39_MAP: Record<string, string> = {
-  '0': 'nnnwwnwnn', '1': 'wnnwnnnnw', '2': 'nnwwnnnnw', '3': 'wnwwnnnnn',
-  '4': 'nnnwwnnnw', '5': 'wnnwwnnnn', '6': 'nnwwwnnnn', '7': 'nnnwnnwnw',
-  '8': 'wnnwnnwnn', '9': 'nnwwnnwnn', A: 'wnnnnwnnw', B: 'nnwnnwnnw',
-  C: 'wnwnnwnnn', D: 'nnnnwwnnw', E: 'wnnnwwnnn', F: 'nnwnwwnnn',
-  G: 'nnnnnwwnw', H: 'wnnnnwwnn', I: 'nnwnnwwnn', J: 'nnnnwwwnn',
-  K: 'wnnnnnnww', L: 'nnwnnnnww', M: 'wnwnnnnwn', N: 'nnnnwnnww',
-  O: 'wnnnwnnwn', P: 'nnwnwnnwn', Q: 'nnnnnnwww', R: 'wnnnnnwwn',
-  S: 'nnwnnnwwn', T: 'nnnnwnwwn', U: 'wwnnnnnnw', V: 'nwwnnnnnw',
-  W: 'wwwnnnnnn', X: 'nwnnwnnnw', Y: 'wwnnwnnnn', Z: 'nwwnwnnnn',
-  '-': 'nwnnnnwnw', '.': 'wwnnnnwnn', ' ': 'nwwnnnwnn', $: 'nwnwnwnnn',
-  '/': 'nwnwnnnwn', '+': 'nwnnnwnwn', '%': 'nnnwnwnwn', '*': 'nwnnwnwnn',
-};
-
-export interface BarRect {
-  x: number;
-  width: number;
-}
-
-export function encodeCode39Bars(rawValue: string): { text: string; bars: BarRect[]; totalWidth: number } {
-  const sanitized = String(rawValue || 'BAR-000001')
-    .toUpperCase()
-    .replace(/[^0-9A-Z\-. $/+%]/g, '-');
-  const full = `*${sanitized || 'BAR-000001'}*`;
-  const bars: BarRect[] = [];
-  let cursor = 0;
-  const narrow = 1.6;
-  const wide = 4.0;
-
-  for (let c = 0; c < full.length; c++) {
-    const pattern = CODE39_MAP[full[c]] || CODE39_MAP['-'];
-    for (let i = 0; i < 9; i++) {
-      const w = pattern[i] === 'w' ? wide : narrow;
-      if (i % 2 === 0) bars.push({ x: cursor, width: w });
-      cursor += w;
-    }
-    cursor += narrow;
-  }
-  return { text: sanitized, bars, totalWidth: cursor };
-}
+import { code128Bars } from './inventory.codes';
 
 const escapeXml = (s: string) =>
   String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -65,9 +25,9 @@ export async function buildInventoryQrSvg(item: {
 }): Promise<string> {
   const qrSvg = await QRCode.toString(item.barcode, { type: 'svg', margin: 1, width: 170 });
   const innerQr = qrSvg.replace(/^<\?xml[^>]*>\s*/i, '');
-  const code39 = encodeCode39Bars(item.barcode);
-  const scaleX = Math.min(1.5, 290 / Math.max(code39.totalWidth, 1));
-  const barRects = code39.bars
+  const code128 = code128Bars(item.barcode);
+  const scaleX = Math.min(3, 290 / Math.max(code128.totalWidth, 1));
+  const barRects = code128.bars
     .map((b) => `<rect x="${(b.x * scaleX).toFixed(2)}" y="0" width="${(b.width * scaleX).toFixed(2)}" height="62" fill="#111827" />`)
     .join('');
 
@@ -128,12 +88,12 @@ export function buildInventoryLabelPdf(item: {
     }
   }
 
-  // Draw crisp vector Code-39 barcode below metadata
-  const code39 = encodeCode39Bars(item.barcode);
-  const scaleX = Math.min(1.45, 310 / Math.max(code39.totalWidth, 1));
+  // Draw crisp vector Code-128 barcode below metadata
+  const code128 = code128Bars(item.barcode);
+  const scaleX = Math.min(2.5, 310 / Math.max(code128.totalWidth, 1));
   const barOriginX = 235;
   const barOriginY = 532;
-  for (const b of code39.bars) {
+  for (const b of code128.bars) {
     ops.push(`${(barOriginX + b.x * scaleX).toFixed(2)} ${barOriginY} ${(b.width * scaleX).toFixed(2)} 46 re f`);
   }
   ops.push(`BT /F2 11 Tf 1 0 0 1 235 514 Tm (${escapePdf(item.barcode)}) Tj ET`);

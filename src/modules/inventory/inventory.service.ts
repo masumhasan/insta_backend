@@ -1,10 +1,15 @@
 import { Inventory } from './inventory.model';
-import { nextSequence } from './counter.model';
 import { User } from '../auth/user.model';
 import { AppError } from '../../utils/apiError';
 import { extractImageFields, cleanupReplacedAsset } from '../../utils/imageGuard';
 import { CloudinaryService } from '../../utils/cloudinary.service';
+import { applyPostFields, postTypeClause, postTypesOf } from './inventory.postTypes';
 import { buildInventoryLabelPdf, buildInventoryQrSvg, generateQrDataUrl, generateQrPngBuffer } from './inventory.qr';
+import {
+  UNIT_STATUSES, assertCodesFree, buildUnits, cleanCustomBarcode, codeLookupFilter, generateItemId, unitNumberOf,
+} from './inventory.codes';
+
+export { UNIT_STATUSES };
 
 const META_FIELDS = [
   'serialNo', 'shelveNo', 'unitPrice', 'rentalPrice', 'removalPrice', 'installPrice', 'shipment', 'replacementCost',
@@ -16,52 +21,24 @@ const META_FIELDS = [
 
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
 
+/** The code printed on the item label: the custom barcode, else the short item code, else a legacy barcode. */
 const resolveBarcode = (item: any, fallbackIndex = 0) =>
-  String(item.barcode || `BAR-${String(item._id || fallbackIndex).slice(-6).toUpperCase()}`);
+  String(item.customBarcode || item.itemId || item.barcode || `BAR-${String(item._id || fallbackIndex).slice(-6).toUpperCase()}`);
 
-// ---- Short item IDs (e.g. PST-0007) -------------------------------------------------------------
-const ITEM_PREFIX: Record<string, string> = {
-  'sign post': 'PST',
-  'main panel': 'PNL',
-  sign: 'SGN',
-  rider: 'RDR',
-  lockbox: 'LBX',
-  'brochure box': 'BRO',
-  directional: 'DIR',
-};
-const prefixFor = (itemType?: string) => ITEM_PREFIX[String(itemType || '').trim().toLowerCase()] || 'ITM';
+/** Older codes that still scan: stored legacy codes plus a pre-migration barcode that is no longer printed. */
+const legacyCodesOf = (item: any, current: string) =>
+  Array.from(new Set([...(item.legacyCodes || []), item.barcode].filter((c) => c && c !== current)));
 
-const generateItemId = async (itemType?: string) => {
-  const prefix = prefixFor(itemType);
-  const seq = await nextSequence(`inventory:${prefix}`);
-  return `${prefix}-${String(seq).padStart(4, '0')}`;
+const formatUnit = (u: any) => {
+  const barcode = u.customBarcode || u.barcode || u.unitId;
+  return { ...u, barcode, customBarcode: u.customBarcode || '', legacyCodes: legacyCodesOf(u, barcode).filter((c) => c !== u.unitId) };
 };
 
-/** Per-unit identifiers: each physical item (e.g. each of 60 white PVC posts) gets its own barcode. */
-export const UNIT_STATUSES = ['Available', 'Installed', 'Missing', 'Damaged', 'Needs Repair', 'Scrapped'] as const;
-
-const buildUnits = (itemId: string, count: number, startAt = 0) =>
-  Array.from({ length: Math.max(0, count) }, (_, i) => {
-    const n = String(startAt + i + 1).padStart(3, '0');
-    return { unitId: `${itemId}-${n}`, barcode: `${itemId}-${n}`, status: 'Available', notes: '', updatedAt: new Date().toISOString() };
-  });
-
-/**
- * The sign company's own barcode numbers: trimmed, upper-cased, limited to what a Code-39 label can print, and
- * refused when already on any item or unit (scanning must find exactly one unit).
- */
+/** The sign company's own barcode numbers for new units: cleaned and refused when already on any item or unit. */
 const cleanOwnBarcodes = async (raw: unknown[]): Promise<string[]> => {
-  const codes = raw.map((b) => String(b ?? '').trim().toUpperCase()).filter(Boolean);
+  const codes = raw.map(cleanCustomBarcode).filter(Boolean);
   if (codes.length > 500) throw new AppError('Add at most 500 barcodes at a time.', 400);
-  const bad = codes.find((c) => c.length > 40 || !/^[A-Z0-9 .$/+%-]+$/.test(c));
-  if (bad) throw new AppError(`"${bad}" cannot be printed as a barcode: use letters, numbers and - . $ / + % (max 40).`, 400);
-  const dup = codes.find((c, i) => codes.indexOf(c) !== i);
-  if (dup) throw new AppError(`Barcode "${dup}" is listed twice.`, 400);
-  const taken = await Inventory.findOne({ $or: [{ barcode: { $in: codes } }, { 'units.barcode': { $in: codes } }] }).lean();
-  if (taken) {
-    const used = codes.find((c) => taken.barcode === c || (taken.units || []).some((u: any) => u.barcode === c));
-    throw new AppError(`Barcode "${used}" is already used by ${taken.product || 'another item'}.`, 409);
-  }
+  await assertCodesFree(codes);
   return codes;
 };
 
@@ -123,11 +100,9 @@ const resolveOwner = async (payload: any, fallback?: { ownerType?: string; owner
   return { ownerType, ownerId, ownerName: user.name };
 };
 
-const NEEDS_POST_TYPE = /^(main panel|sign)$/i;
-
 /** Agents/Offices (and their assistants) only see inventory assigned to their own profile. */
 const OWNER_SCOPED_ROLES = ['Agent', 'Assistant', 'Team Lead', 'Office Manager'];
-const ownerScopeFilter = (user: any, ownedOnly: boolean) => {
+export const ownerScopeFilter = (user: any, ownedOnly: boolean) => {
   if (!user || !OWNER_SCOPED_ROLES.includes(user.role)) return null;
   const ids = [String(user._id), user.parentAgentId ? String(user.parentAgentId) : ''].filter(Boolean);
   const own: any = { ownerId: { $in: ids } };
@@ -157,10 +132,14 @@ const formatInventoryItem = async (item: any, idx = 0) => {
     ownerType: item.ownerType || 'Sign company',
     ownerId: item.ownerId || (item.assignedAgentId ? String(item.assignedAgentId) : ''),
     ownerName: item.assignedAgent || item.owner || 'Instapost LLC',
-    postType: item.postType || '',
-    units: Array.isArray(item.units) ? item.units : [],
+    postType: postTypesOf(item)[0] || '',
+    compatiblePostTypes: postTypesOf(item),
+    ply: item.ply || '',
+    units: Array.isArray(item.units) ? item.units.map(formatUnit) : [],
     office: item.office || '',
     barcode,
+    customBarcode: item.customBarcode || '',
+    legacyCodes: legacyCodesOf(item, barcode).filter((c) => c !== item.itemId),
     qrCode,
     available: item.available ?? 0,
     installed: item.installed ?? 0,
@@ -180,19 +159,15 @@ const formatInventoryItem = async (item: any, idx = 0) => {
   return base;
 };
 
-const findInventoryByIdOrCode = async (id: string) => {
+/** Finds an item by Mongo id or by any of its current, custom or legacy codes (item or unit). */
+const idOrCodeFilter = (id: string) => {
   const clean = decodeURIComponent(String(id || '').trim());
-  const clauses: any[] = [{ barcode: clean }, { itemId: clean }, { 'units.barcode': clean }];
-  if (OBJECT_ID_RE.test(clean)) clauses.unshift({ _id: clean });
-  return Inventory.findOne({ $or: clauses }).lean();
+  return OBJECT_ID_RE.test(clean) ? { _id: clean } : codeLookupFilter(clean);
 };
 
-const findInventoryDoc = async (id: string) => {
-  const clean = decodeURIComponent(String(id || '').trim());
-  const clauses: any[] = [{ barcode: clean }, { itemId: clean }, { 'units.barcode': clean }];
-  if (OBJECT_ID_RE.test(clean)) clauses.unshift({ _id: clean });
-  return Inventory.findOne({ $or: clauses });
-};
+const findInventoryByIdOrCode = async (id: string) => Inventory.findOne(idOrCodeFilter(id)).lean();
+
+const findInventoryDoc = async (id: string) => Inventory.findOne(idOrCodeFilter(id));
 
 export class InventoryService {
   static async getInventory(query: any = {}, user?: any) {
@@ -202,19 +177,11 @@ export class InventoryService {
     if (query.ownerType) and.push({ ownerType: String(query.ownerType) });
     if (query.ownerId) and.push({ ownerId: String(query.ownerId) });
     if (query.itemType) and.push({ itemType: new RegExp("^" + escapeRe(String(query.itemType).trim()) + "$", "i") });
-    // Main panels / signs are tied to a post type; match it case-insensitively against the stored post type.
+    // Main panels / riders list the post types they fit (case-insensitive). Items with no post type saved yet
+    // (older records) stay visible until staff set one.
     if (query.postType) {
       const types = String(query.postType).split("|").map((t) => t.trim()).filter(Boolean);
-      // Items with no post type saved yet (older records) stay visible until staff set one.
-      if (types.length) {
-        and.push({
-          $or: [
-            { postType: { $in: types.map((t) => new RegExp("^" + escapeRe(t) + "$", "i")) } },
-            { postType: "" },
-            { postType: { $exists: false } },
-          ],
-        });
-      }
+      if (types.length) and.push(postTypeClause(types));
     }
     if (query.search) {
       and.push({
@@ -225,6 +192,8 @@ export class InventoryService {
           { barcode: { $regex: query.search, $options: 'i' } },
           { itemId: { $regex: query.search, $options: 'i' } },
           { 'units.barcode': { $regex: query.search, $options: 'i' } },
+          { 'units.unitId': { $regex: query.search, $options: 'i' } },
+          { legacyCodes: { $regex: query.search, $options: 'i' } },
         ],
       });
     }
@@ -236,17 +205,26 @@ export class InventoryService {
     return Promise.all(items.map((item, idx) => formatInventoryItem(item, idx)));
   }
 
+  /** One item by id or by any code, within the caller's inventory visibility (used by the label print page). */
+  static async getInventoryItem(id: string, user?: any) {
+    const scope = ownerScopeFilter(user, false);
+    const filter = scope ? { $and: [idOrCodeFilter(id), scope] } : idOrCodeFilter(id);
+    const item = await Inventory.findOne(filter).lean();
+    if (!item) throw new AppError('Inventory item not found.', 404);
+    return formatInventoryItem(item, 0);
+  }
+
   static async createInventoryItem(payload: any) {
     const available = Number(payload.available) || 0;
     const installed = Number(payload.installed) || 0;
     const total = payload.total !== undefined ? Number(payload.total) : available + installed;
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields(payload);
-    const barcode = payload.barcode || `BAR-${Date.now().toString().slice(-6)}`;
+    const customBarcode = cleanCustomBarcode(payload.customBarcode);
+    if (customBarcode) await assertCodesFree([customBarcode]);
     const status = payload.status || (available > 5 ? 'In Stock' : available > 0 ? 'Low Stock' : 'Checked Out');
     const itemType = payload.itemType || 'Sign post';
-    if (NEEDS_POST_TYPE.test(itemType) && !String(payload.postType || '').trim()) {
-      throw new AppError('Post Type is required for Main panel / Sign items.', 400);
-    }
+    const postFields: any = {};
+    applyPostFields(postFields, payload, itemType, true);
     const owner = await resolveOwner(payload);
     const assignedAgent = owner.ownerName;
     const assignedAgentId = owner.ownerId || null;
@@ -263,7 +241,9 @@ export class InventoryService {
       itemId,
       ownerType: owner.ownerType,
       ownerId: owner.ownerId,
-      postType: String(payload.postType || '').trim(),
+      postType: postFields.postType || '',
+      compatiblePostTypes: postFields.compatiblePostTypes || [],
+      ply: postFields.ply || '',
       units: buildUnits(itemId, available + installed),
       size: payload.size || 'Standard',
       owner: assignedAgent,
@@ -271,7 +251,8 @@ export class InventoryService {
       assignedAgentId,
       status,
       office: payload.office || '',
-      barcode,
+      barcode: customBarcode || itemId,
+      customBarcode,
       available,
       installed,
       total,
@@ -325,12 +306,21 @@ export class InventoryService {
     if (payload.assignedAgentId !== undefined && payload.ownerId === undefined) {
       existing.assignedAgentId = payload.assignedAgentId || null;
     }
-    if (payload.postType !== undefined) existing.postType = String(payload.postType || '').trim();
-    if ((payload.itemType !== undefined || payload.postType !== undefined) && NEEDS_POST_TYPE.test(existing.itemType || '') && !String(existing.postType || '').trim()) {
-      throw new AppError('Post Type is required for Main panel / Sign items.', 400);
-    }
+    applyPostFields(existing, payload, existing.itemType || '', false);
     if (payload.office !== undefined) existing.office = payload.office;
-    if (payload.barcode) existing.barcode = String(payload.barcode).trim();
+    // `barcode` in the body is the displayed code and is ignored; only `customBarcode` relabels the item ('' clears it).
+    const relabelled = payload.customBarcode !== undefined && cleanCustomBarcode(payload.customBarcode) !== (existing.customBarcode || '');
+    if (relabelled) {
+      const next = cleanCustomBarcode(payload.customBarcode);
+      if (next) await assertCodesFree([next], { itemId: String(existing._id), slot: 'item' });
+      if (!existing.itemId) existing.itemId = await generateItemId(existing.itemType);
+      const old = existing.barcode;
+      if (old && old !== existing.itemId && old !== next && !(existing.legacyCodes || []).includes(old) && !existing.customBarcode) {
+        existing.legacyCodes = [...(existing.legacyCodes || []), old];
+      }
+      existing.customBarcode = next;
+      existing.barcode = next || existing.itemId;
+    }
     if (payload.location) existing.location = payload.location;
     if (payload.available !== undefined) existing.available = Number(payload.available) || 0;
     if (payload.installed !== undefined) existing.installed = Number(payload.installed) || 0;
@@ -359,7 +349,7 @@ export class InventoryService {
         },
         ...(existing.history || []),
       ];
-    } else if (payload.location || payload.available !== undefined || payload.installed !== undefined || payload.barcode) {
+    } else if (payload.location || payload.available !== undefined || payload.installed !== undefined || relabelled) {
       existing.history = [
         {
           id: `hist-${Date.now()}`,
@@ -398,8 +388,8 @@ export class InventoryService {
 
     const existing = Array.isArray(item.units) ? item.units : [];
     // Continue numbering after the highest existing suffix so unit IDs (and generated barcodes) are never reused.
-    const highest = existing.reduce((m, u) => Math.max(m, Number(String(u.unitId || '').split('-').pop()) || 0), 0);
-    const units = buildUnits(item.itemId, n, highest).map((u, i) => (own[i] ? { ...u, barcode: own[i] } : u));
+    const highest = existing.reduce((m, u) => Math.max(m, unitNumberOf(u.unitId)), 0);
+    const units = buildUnits(item.itemId, n, highest).map((u, i) => (own[i] ? { ...u, barcode: own[i], customBarcode: own[i] } : u));
     item.units = [...existing, ...units] as any;
     if (addStock) {
       item.available = (item.available || 0) + n;
@@ -410,14 +400,32 @@ export class InventoryService {
   }
 
   /** Record the condition of one specific unit (installed / missing / damaged / needs repair …). */
-  static async updateUnit(id: string, unitBarcode: string, payload: { status?: string; notes?: string; barcode?: string }) {
+  static async updateUnit(
+    id: string,
+    unitBarcode: string,
+    payload: { status?: string; notes?: string; barcode?: string; customBarcode?: string }
+  ) {
     const item = await findInventoryDoc(id);
     if (!item) throw new AppError('Inventory item not found.', 404);
-    const unit: any = (item.units || []).find((u) => u.barcode === unitBarcode || u.unitId === unitBarcode);
+    const want = String(unitBarcode || '').trim().toLowerCase();
+    const unit: any = (item.units || []).find((u) =>
+      [u.barcode, u.unitId, u.customBarcode, ...(u.legacyCodes || [])].some((c) => c && String(c).toLowerCase() === want)
+    );
     if (!unit) throw new AppError('Unit not found on this item.', 404);
 
-    if (payload.barcode !== undefined && String(payload.barcode).trim().toUpperCase() !== unit.barcode) {
-      [unit.barcode] = await cleanOwnBarcodes([payload.barcode]);
+    // `customBarcode` ('' clears it) or the older `barcode` field relabels the unit with the sign company's own number.
+    const rawCustom = payload.customBarcode !== undefined ? payload.customBarcode : payload.barcode;
+    if (rawCustom !== undefined) {
+      const next = cleanCustomBarcode(rawCustom);
+      if (next !== (unit.customBarcode || '') && !(next && next === unit.unitId && !unit.customBarcode)) {
+        if (next) await assertCodesFree([next], { itemId: String(item._id), slot: `unit:${unit.unitId || unit.barcode}` });
+        const old = unit.barcode;
+        if (old && old !== unit.unitId && !unit.customBarcode && !(unit.legacyCodes || []).includes(old)) {
+          unit.legacyCodes = [...(unit.legacyCodes || []), old];
+        }
+        unit.customBarcode = next === unit.unitId ? '' : next;
+        unit.barcode = unit.customBarcode || unit.unitId || old;
+      }
     }
 
     if (payload.status !== undefined) {
@@ -479,24 +487,31 @@ export class InventoryService {
 
   static async importCsv(rows: any[]) {
     if (!Array.isArray(rows) || rows.length === 0) throw new AppError('No inventory rows provided.', 400);
-    const docs = rows
-      .filter((r) => r?.product || r?.name)
-      .map((r, i) => {
-        const avail = Number(r.available ?? r.qty ?? r.quantity ?? 10) || 0;
-        const inst = Number(r.installed ?? 0) || 0;
-        return {
-          product: String(r.product || r.name).trim(),
-          itemType: String(r.itemType || r.type || 'Sign post'),
-          size: String(r.size || 'Standard'),
-          owner: String(r.owner || r.agent || 'Instapost LLC'),
-          office: String(r.office || ''),
-          barcode: String(r.barcode || `BAR-IMP-${Date.now().toString().slice(-4)}${i}`),
-          available: avail,
-          installed: inst,
-          total: avail + inst,
-          location: String(r.location || 'Warehouse-1'),
-        };
+    const valid = rows.filter((r) => r?.product || r?.name);
+    // A `barcode` column is the sign company's own number for that item; otherwise the short item code is printed.
+    const customs = valid.map((r) => cleanCustomBarcode(r.barcode));
+    await assertCodesFree(customs.filter(Boolean));
+    const docs = [];
+    for (const [i, r] of valid.entries()) {
+      const avail = Number(r.available ?? r.qty ?? r.quantity ?? 10) || 0;
+      const inst = Number(r.installed ?? 0) || 0;
+      const itemType = String(r.itemType || r.type || 'Sign post');
+      const itemId = await generateItemId(itemType);
+      docs.push({
+        product: String(r.product || r.name).trim(),
+        itemType,
+        itemId,
+        size: String(r.size || 'Standard'),
+        owner: String(r.owner || r.agent || 'Instapost LLC'),
+        office: String(r.office || ''),
+        barcode: customs[i] || itemId,
+        customBarcode: customs[i],
+        available: avail,
+        installed: inst,
+        total: avail + inst,
+        location: String(r.location || 'Warehouse-1'),
       });
+    }
     const inserted = await Inventory.insertMany(docs);
     return { importedCount: inserted.length };
   }
@@ -504,7 +519,7 @@ export class InventoryService {
   private static async resolveItemLabelMeta(id: string, queryCode?: string) {
     const item = await findInventoryByIdOrCode(id);
     if (!item && !queryCode) throw new AppError('Inventory item not found.', 404);
-    const barcode = String(queryCode || (item ? resolveBarcode(item) : id)).toUpperCase();
+    const barcode = String(queryCode || (item ? resolveBarcode(item) : id)).trim();
     return {
       name: item?.product || 'Inventory Asset',
       type: item?.itemType || item?.size || 'Sign post',

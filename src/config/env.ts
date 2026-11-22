@@ -29,6 +29,11 @@ export const config = {
     email: process.env.OTP_EMAIL || '',
     password: process.env.OTP_APP_PASSWORD || '',
   },
+  /** Optional. Without STRIPE_SECRET_KEY the /payments endpoints answer 503 "Payments not configured". */
+  stripe: {
+    secretKey: (process.env.STRIPE_SECRET_KEY || '').trim(),
+    publishableKey: (process.env.STRIPE_PUBLISHABLE_KEY || '').trim(),
+  },
   admin: {
     email: process.env.ADMIN_EMAIL || '',
     password: process.env.ADMIN_PASSWORD || '',

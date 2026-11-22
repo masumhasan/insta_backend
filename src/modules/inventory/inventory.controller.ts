@@ -9,6 +9,11 @@ export const getInventory = asyncHandler(async (req: Request, res: Response) => 
   return ApiResponse.success(res, 200, 'Inventory items retrieved successfully', data);
 });
 
+export const getInventoryItem = asyncHandler(async (req: Request, res: Response) => {
+  const data = await InventoryService.getInventoryItem(String(req.params.id), (req as any).user);
+  return ApiResponse.success(res, 200, 'Inventory item retrieved successfully', data);
+});
+
 export const createInventoryItem = asyncHandler(async (req: Request, res: Response) => {
   const data = await InventoryService.createInventoryItem(req.body);
   return ApiResponse.success(res, 201, 'Inventory item created successfully', data);
@@ -81,8 +86,9 @@ export const generateInventoryUnits = asyncHandler(async (req: Request, res: Res
 export const updateInventoryUnit = asyncHandler(async (req: Request, res: Response) => {
   const body = { ...(req.body || {}) };
   // Field staff record a unit's condition; only staff and the warehouse may relabel it.
-  if (body.barcode !== undefined && !['Admin', 'Sign company', 'Office Manager', 'Warehouse manager'].includes((req as any).user?.role)) {
+  if (!['Admin', 'Sign company', 'Office Manager', 'Warehouse manager'].includes((req as any).user?.role)) {
     delete body.barcode;
+    delete body.customBarcode;
   }
   const data = await InventoryService.updateUnit(String(req.params.id), String(req.params.unit), body);
   return ApiResponse.success(res, 200, 'Unit updated successfully', data);

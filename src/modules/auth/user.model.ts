@@ -33,6 +33,8 @@ export interface IUserDocument extends Document {
   staffRole?: string;
   parentAgentId?: string;
   paymentMethodPreference?: 'credit_card' | 'invoice_later' | '';
+  /** Stripe customer that holds this user's saved cards (set on first card setup). */
+  stripeCustomerId?: string;
   teamLeadApplication?: {
     status: 'none' | 'pending' | 'approved' | 'rejected';
     companyOffice?: string;
@@ -92,6 +94,7 @@ const userSchema = new Schema<IUserDocument>(
       enum: ['credit_card', 'invoice_later', ''],
       default: '',
     },
+    stripeCustomerId: { type: String, default: '', select: false },
     teamLeadApplication: { type: Schema.Types.Mixed, default: { status: 'none' } },
     crm: { type: Schema.Types.Mixed, default: {} },
     lastContactDate: { type: String, default: '' },

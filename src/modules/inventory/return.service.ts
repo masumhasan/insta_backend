@@ -1,5 +1,6 @@
 import { ReturnRecord } from './return.model';
 import { Inventory } from './inventory.model';
+import { generateItemId } from './inventory.codes';
 import { AppError } from '../../utils/apiError';
 import { NotificationService } from '../notification/notification.service';
 import { Order } from '../order/order.model';
@@ -129,15 +130,18 @@ export class InventoryReturnService {
       ];
       await inventoryDoc.save();
     } else if (cond === 'new_item' && !inventoryDoc && !fieldStaff) {
+      const newItemType = payload.itemType || 'Rider';
+      const newItemId = await generateItemId(newItemType);
       await Inventory.create({
         product: itemName,
-        itemType: payload.itemType || 'Rider',
+        itemType: newItemType,
+        itemId: newItemId,
         size: payload.size || 'Standard',
         owner: record.agent || 'Instapost LLC',
         available: qty,
         installed: 0,
         total: qty,
-        barcode: `BAR-${Date.now().toString().slice(-6)}`,
+        barcode: newItemId,
         location: 'Warehouse Queue (New Item)',
         history: [
           {
