@@ -3,6 +3,7 @@ import { Inventory } from '../inventory/inventory.model';
 import { codeLookupFilter } from '../inventory/inventory.codes';
 import { NotificationService } from '../notification/notification.service';
 import { AppError } from '../../utils/apiError';
+import { formatUsDate } from '../../utils/formatUsDate';
 import { isOrderVisibleToUser } from './order.service';
 
 const findOrderOrThrow = async (id: string) => {
@@ -117,6 +118,7 @@ export class OrderLifecycleService {
     currentUser?: any
   ) {
     const order = await findOrderOrThrow(id);
+    if (currentUser && !(await isOrderVisibleToUser(order, currentUser))) throw new AppError('Access forbidden for this order.', 403);
     const action = payload.action || 'request';
 
     if (action === 'approve' || action === 'reject') {
@@ -156,7 +158,7 @@ export class OrderLifecycleService {
       await NotificationService.safeNotify({
         recipientRole: 'Sign company',
         title: `Due Date Change Request (${order.orderNumber})`,
-        message: `${order.dueDateRequest.requestedBy} requested moving due date to ${payload.requestedDate}.`,
+        message: `${order.dueDateRequest.requestedBy} requested moving due date to ${formatUsDate(payload.requestedDate)}.`,
         type: 'due_date',
         referenceId: order.orderNumber,
       });

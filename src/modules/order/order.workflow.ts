@@ -55,6 +55,28 @@ export const assignedStatusFor = (type: string): string => pendingStatusFor(type
 export const nextStatuses = (order: any, user?: { role?: string }): string[] =>
   isFieldUser(user) ? TABLES[order?.type]?.[order?.status] ?? [] : [];
 
+/** Custom-print orders (order.designApproval.ts): approved design -> "In Production" -> "Ready to Install" -> dispatch. */
+export const IN_PRODUCTION = 'In Production';
+export const READY_TO_INSTALL = 'Ready to Install';
+
+/** Why this order may not be dispatched yet ('' when it may). Only orders carrying `designApproval.required`. */
+export function designDispatchBlock(order: any): string {
+  const da = order?.designApproval;
+  if (!da?.required || da.productionCompletedAt) return '';
+  const ref = order.orderNumber ? `Order ${order.orderNumber}` : 'This order';
+  if (da.status === 'approved') return `${ref} is still In Production. Mark it Ready to Install before assigning an installer.`;
+  if (da.status === 'changes_requested') {
+    return `The customer asked for changes to the custom design on ${ref.toLowerCase()}. Upload a new proof and wait for approval before assigning an installer.`;
+  }
+  return `${ref} is waiting for the customer to approve its custom design. An installer can be assigned once it is approved and marked Ready to Install.`;
+}
+
+/** Refuses installer assignment / dispatch while the custom design is unapproved or still in production (409). */
+export function assertDispatchAllowed(order: any) {
+  const reason = designDispatchBlock(order);
+  if (reason) throw new AppError(reason, 409);
+}
+
 /** Throws when a field user's status change breaks the workflow. Returns the note to append to the order. */
 export function assertFieldStatusChange(order: any, payload: { status?: string; statusNote?: string }): string {
   const next = String(payload.status || '');

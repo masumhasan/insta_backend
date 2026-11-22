@@ -4,10 +4,12 @@ import { AppError } from '../../utils/apiError';
 import { extractImageFields, cleanupReplacedAsset } from '../../utils/imageGuard';
 import { CloudinaryService } from '../../utils/cloudinary.service';
 import { applyPostFields, postTypeClause, postTypesOf } from './inventory.postTypes';
+import { cleanRiderMount } from './inventory.riderMount';
 import { buildInventoryLabelPdf, buildInventoryQrSvg, generateQrDataUrl, generateQrPngBuffer } from './inventory.qr';
 import {
   UNIT_STATUSES, assertCodesFree, buildUnits, cleanCustomBarcode, codeLookupFilter, generateItemId, unitNumberOf,
 } from './inventory.codes';
+import { defaultStatusOf, displayStatusOf, stockLevelOf } from './inventory.stock';
 
 export { UNIT_STATUSES };
 
@@ -117,7 +119,7 @@ const formatInventoryItem = async (item: any, idx = 0) => {
   const qrCode = await generateQrDataUrl(barcode);
   const status = item.status && String(item.status).trim() !== ''
     ? String(item.status).trim()
-    : (item.available || 0) > 5 ? 'In Stock' : (item.available || 0) > 0 ? 'Low Stock' : 'Checked Out';
+    : defaultStatusOf(item.available);
 
   const base: any = {
     id: idx + 1,
@@ -146,10 +148,14 @@ const formatInventoryItem = async (item: any, idx = 0) => {
     total: item.total ?? (item.available ?? 0) + (item.installed ?? 0),
     location: item.location || 'Warehouse-1',
     status,
+    stockLevel: stockLevelOf(item.available),
+    displayStatus: displayStatusOf(item.status, item.available),
     imageUrl: item.imageUrl || item.image || '',
     publicId: item.publicId || '',
     image: item.imageUrl || item.image || '',
     history: Array.isArray(item.history) ? item.history : [],
+    // Personnel @mentioned in `notes` (inventory.notes.ts); the edit form sends them back with the notes.
+    notesMentions: Array.isArray(item.notesMentions) ? item.notesMentions.map(String) : [],
     lastUpdated: item.lastUpdated || (item.updatedAt ? new Date(item.updatedAt).toLocaleDateString('en-GB') : ''),
   };
 
@@ -214,14 +220,15 @@ export class InventoryService {
     return formatInventoryItem(item, 0);
   }
 
-  static async createInventoryItem(payload: any) {
+  static async createInventoryItem(rawPayload: any) {
+    const payload = cleanRiderMount(rawPayload || {}, rawPayload?.itemType || 'Sign post');
     const available = Number(payload.available) || 0;
     const installed = Number(payload.installed) || 0;
     const total = payload.total !== undefined ? Number(payload.total) : available + installed;
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields(payload);
     const customBarcode = cleanCustomBarcode(payload.customBarcode);
     if (customBarcode) await assertCodesFree([customBarcode]);
-    const status = payload.status || (available > 5 ? 'In Stock' : available > 0 ? 'Low Stock' : 'Checked Out');
+    const status = payload.status || defaultStatusOf(available);
     const itemType = payload.itemType || 'Sign post';
     const postFields: any = {};
     applyPostFields(postFields, payload, itemType, true);
@@ -276,9 +283,10 @@ export class InventoryService {
     return formatInventoryItem(item.toObject(), 0);
   }
 
-  static async updateInventoryItem(id: string, payload: any) {
+  static async updateInventoryItem(id: string, rawPayload: any) {
     const existing = await Inventory.findById(id);
     if (!existing) throw new AppError('Inventory item not found.', 404);
+    const payload = cleanRiderMount(rawPayload || {}, rawPayload?.itemType || existing.itemType, existing.mountType);
 
     const { hasImageUpdate, imageUrl, publicId } = extractImageFields(payload);
     if (payload.product || payload.name) existing.product = payload.product || payload.name;

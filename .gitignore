@@ -5,8 +5,6 @@ jspm_packages/
 .pnp.js
 
 # Environment variables & secrets
-.env
-.env.*
 !.env.example
 
 # Logs
@@ -64,7 +62,6 @@ Desktop.ini
 
 # IDE & Editor files
 .idea/
-.vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
@@ -77,3 +74,4 @@ Desktop.ini
 
 
 .vercel
+config.bat

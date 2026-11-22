@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate } from '../../middlewares/auth.middleware';
 import { authorizeRoles, STAFF_ROLES } from '../../middlewares/roleGuard.middleware';
+import { getMediaOfferings } from './catalog.media';
 import {
   getWarehouses,
   createWarehouse,
@@ -23,6 +24,8 @@ import {
   updateServiceItem,
   deleteServiceItem,
   getActiveAnnouncements,
+  getAddOns,
+  getPrintOptions,
 } from './catalog.controller';
 const router = Router();
 
@@ -64,6 +67,11 @@ router.delete('/coupons/:id', staffOnly, deleteCoupon);
 // Service Items (Services, Sign Types, Sizes, Delivery Methods, Options, etc.)
 // Announcements that are currently live for a portal (?portal=agent|assistant|team_lead|warehouse|installer|sign_company)
 router.get('/announcements/active', getActiveAnnouncements);
+// Read lists for the order forms (any signed-in user); staff manage the rows through /items.
+router.get('/add-ons', getAddOns);
+router.get('/print-options', getPrintOptions);
+// Media Services order form: photography, videography, media packages, extras and add-ons (with durations).
+router.get('/media-offerings', getMediaOfferings);
 router.post('/items', staffOnly, createServiceItem);
 router.patch('/items/:id', staffOnly, updateServiceItem);
 router.delete('/items/:id', staffOnly, deleteServiceItem);

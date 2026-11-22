@@ -3,13 +3,18 @@ import { geocodeAddress } from '../geo/geocode.service';
 import { OrderMediaService, normalizePhotos } from './order.media.service';
 import { User } from '../auth/user.model';
 import { AppError } from '../../utils/apiError';
+import { formatUsDate } from '../../utils/formatUsDate';
 import { assertNoBase64 } from '../../utils/imageGuard';
 import { isStaff } from '../../middlewares/roleGuard.middleware';
 import { priceCustomerOrder } from './order.pricing';
 import { legacyPostKeys, priceInstallExtras, resolvePostSetups } from './order.postSetups';
-import { assertFieldStatusChange, assignedStatusFor, isFieldUser, nextStatuses, pendingStatusFor } from './order.workflow';
+import { assertFieldStatusChange, assignedStatusFor, isFieldUser, nextStatuses, pendingStatusFor, assertDispatchAllowed, READY_TO_INSTALL } from './order.workflow';
+import { assertDesignOrderEdit, formatDesignApproval, hasCustomItems, newDesignApproval, notifyDesignRequested } from './order.designApproval';
 import { Coupon } from '../catalog/coupon.model';
+import { canRescheduleFor, computeDaysInField } from './order.dates';
+import { listOrders } from './order.query';
 import { isStripeConfigured } from '../payment/stripe.client';
+import { prepareMediaOrder } from './order.mediaBooking';
 
 /** Money and payment fields: only staff may set or change them after an order exists. */
 const MONEY_FIELDS = ['totalAmount', 'price', 'subtotal', 'discountAmount', 'rushFee', 'taxAmount', 'paymentStatus', 'paymentMethod'];
@@ -26,6 +31,11 @@ export interface IGetOrdersQuery {
   date?: string;
   startDate?: string;
   endDate?: string;
+  /** order (default) | due | completed: which date startDate/endDate filter on. */
+  dateField?: string;
+  /** orderDate (default) | dueDate | completedDate */
+  sortBy?: string;
+  sortDir?: string;
   page?: string | number;
   limit?: string | number;
 }
@@ -44,6 +54,7 @@ const STATUS_FILTER_MAP: Record<string, string> = {
   assigned_down: 'Assigned Down',
   removed: 'Removed',
   in_production: 'In Production',
+  ready_to_install: 'Ready to Install',
   added_inventory: 'Added to Inventory',
   out_for_delivery: 'Out for Delivery',
   pending: 'Pending',
@@ -127,32 +138,6 @@ const formatCurrencyPrice = (rawPrice: any, totalAmount?: any): string => {
   return Number.isFinite(n) ? `$${n.toFixed(2)}` : '$0.00';
 };
 
-const parseFlexibleDate = (raw?: string, fallback?: Date): Date | null => {
-  if (raw && /^\d{4}-\d{2}-\d{2}/.test(raw)) {
-    const d = new Date(raw);
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  if (raw && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(raw)) {
-    const [a, b, y] = raw.split('/').map(Number);
-    // Prefer DD/MM/YYYY when first part > 12, else MM/DD/YYYY (with UTC safe fallback)
-    const month = a > 12 ? b - 1 : a - 1;
-    const day = a > 12 ? a : b;
-    const d = new Date(Date.UTC(y, month, day));
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  return fallback && !Number.isNaN(fallback.getTime()) ? fallback : null;
-};
-
-const computeDaysInField = (o: any): number => {
-  if (typeof o.daysInField === 'number' && Number.isFinite(o.daysInField)) return o.daysInField;
-  const st = String(o.status || '').toLowerCase();
-  if (['waiting on payment', 'on hold', 'cancelled', 'canceled'].includes(st)) return 0;
-  const start = o.createdAt ? new Date(o.createdAt) : parseFlexibleDate(o.orderDate);
-  if (!start || Number.isNaN(start.getTime())) return 0;
-  const diff = Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24));
-  return Math.max(0, diff);
-};
-
 const formatOrder = (o: any) => ({
   id: o.orderNumber || o._id.toString(),
   _id: o._id.toString(),
@@ -184,10 +169,14 @@ const formatOrder = (o: any) => ({
   readyForInstall: !!o.pullReadyAt,
   readyForInstallAt: o.pullReadyAt ? new Date(o.pullReadyAt).toISOString() : '',
   readyForInstallBy: o.pullReadyBy || '',
+  installedAt: o.installedAt ? new Date(o.installedAt).toISOString() : '',
+  removedAt: o.removedAt ? new Date(o.removedAt).toISOString() : '',
+  completedAt: o.completedAt ? new Date(o.completedAt).toISOString() : '',
   missingItems: Array.isArray(o.missingItems) ? o.missingItems : [],
   dueDateRequest: o.dueDateRequest || { status: 'none' },
   specifications: o.specifications || {},
   refunds: Array.isArray(o.refunds) ? o.refunds : [],
+  designApproval: formatDesignApproval(o.designApproval),
   createdAt: o.createdAt ? new Date(o.createdAt).toISOString() : undefined,
 });
 
@@ -273,8 +262,10 @@ export class OrderService {
       filter.status = { $regex: `^${escapeRegex(canonical)}$`, $options: 'i' };
     }
 
-    if (query.installerEmail) {
-      filter.installerEmail = query.installerEmail.toLowerCase();
+    if (query.installerEmail === 'unassigned') {
+      filter.installerName = { $in: ['', null] };
+    } else if (query.installerEmail) {
+      filter.installerEmail = String(query.installerEmail).toLowerCase();
     }
 
     if (query.installerName && query.installerName !== 'all') {
@@ -301,11 +292,6 @@ export class OrderService {
           { createdAt: { $gte: dayStart, $lte: dayEnd } },
         ],
       });
-    } else if (query.startDate || query.endDate) {
-      const createdAtRange: any = {};
-      if (query.startDate) createdAtRange.$gte = new Date(`${query.startDate}T00:00:00.000Z`);
-      if (query.endDate) createdAtRange.$lte = new Date(`${query.endDate}T23:59:59.999Z`);
-      andClauses.push({ createdAt: createdAtRange });
     }
 
     if (query.searchQuery && query.searchQuery.trim() !== '') {
@@ -324,13 +310,11 @@ export class OrderService {
       filter.$and = andClauses;
     }
 
-    const [total, orders] = await Promise.all([
-      Order.countDocuments(filter),
-      Order.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-    ]);
+    // Sorting and the startDate/endDate range (on the order, due or completed date) live in order.query.ts.
+    const { orders, total } = await listOrders(filter, query.date ? { ...query, startDate: '', endDate: '' } : query, skip, limit);
 
     return {
-      orders: orders.map((o: any) => ({ ...formatOrder(o), nextStatuses: nextStatuses(o, currentUser) })),
+      orders: orders.map((o: any) => ({ ...formatOrder(o), nextStatuses: nextStatuses(o, currentUser), canReschedule: canRescheduleFor(o, currentUser) })),
       meta: {
         page,
         limit,
@@ -349,7 +333,7 @@ export class OrderService {
     if (!(await isOrderVisibleToUser(order, currentUser))) {
       throw new AppError('Access forbidden for this order.', 403);
     }
-    return { ...formatOrder(order), nextStatuses: nextStatuses(order, currentUser) };
+    return { ...formatOrder(order), nextStatuses: nextStatuses(order, currentUser), canReschedule: canRescheduleFor(order, currentUser) };
   }
 
   static async createOrder(rawPayload: any, currentUser?: any) {
@@ -399,6 +383,11 @@ export class OrderService {
       payload.specifications = { ...specsIn, postSetups: setups, ...legacyPostKeys(setups) };
       if (!staffOrder) payload.subtotal = Number((postsSubtotal + (await priceInstallExtras(specsIn, currentUser))).toFixed(2));
     }
+    // Media Services from the order form: priced and timed from the catalog, appointment re-checked (no double booking).
+    if ((TYPE_ALIASES[payload.type] || payload.type) === 'Media Services' && specsIn.media) {
+      const mediaSubtotal = await prepareMediaOrder(payload, currentUser);
+      if (!staffOrder) payload.subtotal = mediaSubtotal;
+    }
     // Customer orders are priced on the server (fees, tax and coupon come from settings and the coupon table).
     // Staff may enter a custom total, but it must still be present and valid.
     const priced = staffOrder ? null : await priceCustomerOrder(payload, paymentMethod, TYPE_ALIASES[payload.type] || payload.type || 'Installation');
@@ -425,6 +414,12 @@ export class OrderService {
       if (targetUser?.name) {
         resolvedAgentName = targetUser.name;
       }
+    }
+
+    // Custom printed pieces wait for the customer's design approval (order.designApproval.ts); no dispatch before that.
+    const designApproval = hasCustomItems(payload.specifications) ? newDesignApproval(currentUser) : undefined;
+    if (designApproval && (String(payload.installerName || '').trim() || /^assigned/i.test(String(payload.status || '')))) {
+      throw new AppError('An order with custom pieces cannot get an installer until its design is approved and it is Ready to Install.', 409);
     }
 
     // Geocode the address up front (best effort, short timeout) so the stop can be pinned on the routing map.
@@ -474,9 +469,11 @@ export class OrderService {
       specifications: { ...(payload.specifications || {}), ...geoSpecs },
       // The customer who placed it pays for it with their saved cards (see modules/payment).
       ...(staffOrder || !currentUser?._id ? {} : { payment: { payerId: String(currentUser._id) } }),
+      ...(designApproval ? { designApproval } : {}),
     });
 
     await syncInstallFromRemoval(order);
+    if (designApproval) await notifyDesignRequested(order, currentUser?.name);
 
     if (priced && priced.discountAmount > 0 && payload.couponCode) {
       await Coupon.updateOne({ code: String(payload.couponCode).trim().toUpperCase() }, { $inc: { usageCount: 1 } });
@@ -515,7 +512,7 @@ export class OrderService {
     if (isFieldUser(currentUser)) {
       // Installers and photographers only move an order along its field workflow (see order.workflow.ts).
       const note = assertFieldStatusChange(order, payload);
-      const stamp = new Date().toLocaleDateString('en-GB');
+      const stamp = formatUsDate(new Date());
       if (note) order.notes = [order.notes, `[${stamp}] ${payload.status}: ${note}`].filter(Boolean).join('\n');
       payload = { status: payload.status };
     } else if (!isStaff(currentUser)) {
@@ -528,6 +525,7 @@ export class OrderService {
       }
     }
 
+    assertDesignOrderEdit(order, payload);
     const prevStatus = order.status;
     if (payload.status) order.status = payload.status;
     if (payload.installerName !== undefined) order.installerName = payload.installerName;
@@ -573,7 +571,7 @@ export class OrderService {
         referenceId: order.orderNumber,
       });
     }
-    return { ...formatOrder(order.toObject()), nextStatuses: nextStatuses(order, currentUser) };
+    return { ...formatOrder(order.toObject()), nextStatuses: nextStatuses(order, currentUser), canReschedule: canRescheduleFor(order, currentUser) };
   }
 
   static async assignInstaller(
@@ -590,10 +588,12 @@ export class OrderService {
       order.installerName = '';
       order.installerEmail = '';
       order.installerId = '';
-      if (/^assigned/i.test(order.status)) order.status = pendingStatusFor(order.type);
+      if (/^assigned/i.test(order.status)) order.status = order.designApproval?.productionCompletedAt ? READY_TO_INSTALL : pendingStatusFor(order.type);
       await order.save();
       return { id: order.orderNumber, status: order.status, installerName: '' };
     }
+    // Custom-print orders are dispatched only once the design is approved and production is done (409 otherwise).
+    assertDispatchAllowed(order);
 
     order.installerName = installer.name;
     order.installerEmail = String(installer.email || '').toLowerCase();
@@ -609,7 +609,7 @@ export class OrderService {
       recipientEmail: installer.email,
       recipientRole: 'Installer',
       title: `Job Assigned (${order.orderNumber})`,
-      message: `${order.type} at ${order.address} (Due: ${order.dueDate || 'Standard'}).`,
+      message: `${order.type} at ${order.address} (Due: ${formatUsDate(order.dueDate) || 'Standard'}).`,
       type: 'order',
       referenceId: order.orderNumber,
     });

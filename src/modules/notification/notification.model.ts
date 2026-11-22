@@ -8,6 +8,8 @@ export interface INotificationDocument extends Document {
   message: string;
   type: 'mention' | 'order' | 'approval' | 'team_lead' | 'due_date' | 'system';
   referenceId?: string;
+  /** Path of the related record in the staff portals (e.g. /users/agents/<id>). */
+  link?: string;
   read: boolean;
   createdBy?: string;
   createdAt: Date;
@@ -27,6 +29,7 @@ const notificationSchema = new Schema<INotificationDocument>(
       default: 'system',
     },
     referenceId: { type: String, default: '' },
+    link: { type: String, default: '' },
     read: { type: Boolean, default: false, index: true },
     createdBy: { type: String, default: 'System' },
   },

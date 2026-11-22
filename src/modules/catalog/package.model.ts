@@ -15,6 +15,8 @@ export interface IPackageDocument extends Document {
   agents: string[];
   offices: string[];
   features: { id: string; name: string }[];
+  /** Onsite minutes for the Media Services schedule; 0 = sum of the featured services' durations. */
+  durationMinutes?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -37,6 +39,7 @@ const packageSchema = new Schema<IPackageDocument>(
       },
     ],
     price: { type: Number, required: true, default: 0 },
+    durationMinutes: { type: Number, default: 0, min: 0 },
     imageUrl: { type: String, default: '' },
     publicId: { type: String, default: '' },
     description: { type: String, default: '' },

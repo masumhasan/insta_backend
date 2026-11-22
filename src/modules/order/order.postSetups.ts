@@ -1,9 +1,12 @@
 import { Inventory } from '../inventory/inventory.model';
 import { ownerScopeFilter } from '../inventory/inventory.service';
 import { fitsPost } from '../inventory/inventory.postTypes';
+import { riderSlotsFor } from '../inventory/inventory.riderMount';
 import { ServiceItem } from '../catalog/service.model';
+import { findOrderableAddOns } from '../catalog/catalog.addons';
 import { AppError } from '../../utils/apiError';
 import { itemFeeOf, moneyOf as money, round2 as round, setupTotal } from './order.postMath';
+import { isCustomSlot, loadPrintCatalog, resolveCustomSlot, type CustomDesign, type PrintCatalog } from './order.customPrint';
 
 /**
  * New Sign Install with 1–3 posts at one address. Each post setup has its own post, main panel and riders and is
@@ -16,7 +19,7 @@ export type SlotKey = (typeof SLOT_KEYS)[number];
 export const SLOT_NAMES: Record<SlotKey, string> = { top1: 'Top Rider', top2: 'Bottom Rider 2', main: 'Main Panel', bottom: 'Bottom Rider' };
 const SLOT_TYPE: Record<SlotKey, RegExp> = { top1: /^rider$/i, top2: /^rider$/i, main: /^(main panel|sign)$/i, bottom: /^rider$/i };
 
-export type PricedSlot = { id: string; name: string; size: string; image: string; owner: string; price: number };
+export type PricedSlot = { id: string; name: string; size: string; image: string; owner: string; price: number; custom?: true; design?: CustomDesign };
 export type PricedSetup = {
   postId: string;
   postName: string;
@@ -54,8 +57,12 @@ const slotOf = (r: any): PricedSlot => ({ id: String(r._id), name: String(r.prod
 export async function resolvePostSetups(raw: unknown, user: any): Promise<{ setups: PricedSetup[]; subtotal: number }> {
   if (!Array.isArray(raw) || raw.length === 0) throw new AppError('Add at least one post to the order.', 400);
   if (raw.length > MAX_POSTS) throw new AppError(`An address can have at most ${MAX_POSTS} posts.`, 400);
-  const ids = raw.flatMap((s: any) => [idOf(s?.postId), ...SLOT_KEYS.map((k) => idOf(s?.slots?.[k])).filter(Boolean)]);
-  const [items, fallbackFee] = await Promise.all([loadVisible(ids, user), catalogInstallFee()]);
+  const ids = raw.flatMap((s: any) => [
+    idOf(s?.postId),
+    ...SLOT_KEYS.map((k) => s?.slots?.[k]).map((v) => (isCustomSlot(v) ? idOf(v?.design?.templateId) : idOf(v))).filter(Boolean),
+  ]);
+  const anyCustom = raw.some((s: any) => SLOT_KEYS.some((k) => isCustomSlot(s?.slots?.[k])));
+  const [items, fallbackFee, printing] = await Promise.all([loadVisible(ids, user), catalogInstallFee(), anyCustom ? loadPrintCatalog() : null]);
 
   const setups = raw.map((s: any, i: number): PricedSetup => {
     const n = i + 1;
@@ -65,11 +72,19 @@ export async function resolvePostSetups(raw: unknown, user: any): Promise<{ setu
     if (!(installFee > 0)) throw new AppError(`Post ${n}: the install price is not configured (set an Install Price on the post or add an Installation service).`, 400);
     const slots: PricedSetup['slots'] = {};
     for (const k of SLOT_KEYS) {
-      const id = idOf(s?.slots?.[k]);
+      const v = s?.slots?.[k];
+      if (isCustomSlot(v)) {
+        const tpl = items.get(idOf(v?.design?.templateId));
+        const template = tpl && SLOT_TYPE[k].test(String(tpl.itemType || '')) ? tpl : undefined;
+        slots[k] = resolveCustomSlot(v, k !== 'main', `Post ${n} ${SLOT_NAMES[k].toLowerCase()}`, printing as PrintCatalog, template);
+        continue;
+      }
+      const id = idOf(v);
       if (!id) continue;
       const it = items.get(id);
       if (!it || !SLOT_TYPE[k].test(String(it.itemType || ''))) throw new AppError(`Post ${n}: the ${SLOT_NAMES[k].toLowerCase()} is not available.`, 400);
       if (!fitsPost(it, post.product)) throw new AppError(`Post ${n}: "${it.product}" does not fit on ${post.product}.`, 400);
+      if (k !== 'main' && !riderSlotsFor(it.mountType).includes(k)) throw new AppError(`Post ${n}: "${it.product}" (${it.mountType}) cannot be mounted as the ${SLOT_NAMES[k].toLowerCase()}.`, 400);
       slots[k] = slotOf(it);
     }
     const t = setupTotal(installFee, Object.values(slots).map((x) => x!.price));
@@ -98,9 +113,7 @@ export async function priceInstallExtras(specs: any, user: any): Promise<number>
   }
   const addOnIds = (Array.isArray(specs?.addons) ? specs.addons : []).map(idOf).filter((id: string) => OBJECT_ID.test(id));
   if (addOnIds.length) {
-    const rows = await ServiceItem.find({ _id: { $in: addOnIds }, type: 'settings_service' }).lean();
-    const valid = rows.filter((r: any) => r.options?.addOn === true && r.options?.active !== false);
-    if (valid.length !== new Set(addOnIds).size) throw new AppError('One of the selected add-on services is not available.', 400);
+    const valid = await findOrderableAddOns(addOnIds, 'sign_installations', user);
     total += valid.reduce((s: number, r: any) => s + money(r.price), 0);
   }
   return round(total);
@@ -114,5 +127,9 @@ export function legacyPostKeys(setups: PricedSetup[]) {
     postLabel: setups.length > 1 ? setups.map((s, i) => `Post ${i + 1}: ${s.postLabel}`).join(' · ') : first.postLabel,
     slots: first.slots,
     postCount: setups.length,
+    // Custom (designed / uploaded) pieces waiting for the customer's design approval.
+    customItems: setups.flatMap((s, i) =>
+      SLOT_KEYS.filter((k) => s.slots[k]?.custom).map((k) => ({ post: i + 1, slot: k, slotName: SLOT_NAMES[k], name: s.slots[k]!.name, price: s.slots[k]!.price, ...s.slots[k]!.design })),
+    ),
   };
 }

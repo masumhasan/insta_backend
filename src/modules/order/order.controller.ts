@@ -2,6 +2,7 @@ import { getPricingConfig, couponDiscount } from './order.pricing';
 import { Request, Response } from 'express';
 import { OrderService } from './order.service';
 import { OrderLifecycleService } from './order.lifecycle.service';
+import { rescheduleOrder } from './order.reschedule';
 import { ApiResponse } from '../../utils/apiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
 
@@ -104,7 +105,12 @@ export const requestDueDateChange = asyncHandler(async (req: Request, res: Respo
   return ApiResponse.success(res, 200, 'Due date request updated successfully', result);
 });
 
-export const updateOrderPullList = asyncHandler(async (req: Request, res: Response) => {
+export const rescheduleOrderDueDate = asyncHandler(async (req: Request, res: Response) => {
+  const result = await rescheduleOrder(req.params.id as string, req.body || {}, (req as any).user);
+  return ApiResponse.success(res, 200, 'Order rescheduled. The sign company has been notified.', result);
+});
+
+export const updateOrderPullList =asyncHandler(async (req: Request, res: Response) => {
   const result = await OrderLifecycleService.updatePullList(req.params.id as string, req.body, (req as any).user);
   return ApiResponse.success(res, 200, 'Pull list updated successfully', result);
 });

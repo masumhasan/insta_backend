@@ -3,6 +3,7 @@ import { InventoryService } from './inventory.service';
 import { InventoryReturnService } from './return.service';
 import { ApiResponse } from '../../utils/apiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
+import { prepareNoteMentions } from './inventory.notes';
 
 export const getInventory = asyncHandler(async (req: Request, res: Response) => {
   const data = await InventoryService.getInventory(req.query, (req as any).user);
@@ -20,7 +21,10 @@ export const createInventoryItem = asyncHandler(async (req: Request, res: Respon
 });
 
 export const updateInventoryItem = asyncHandler(async (req: Request, res: Response) => {
-  const data = await InventoryService.updateInventoryItem(req.params.id as string, req.body);
+  const id = req.params.id as string;
+  const mentions = await prepareNoteMentions(id, req.body);
+  const data = await InventoryService.updateInventoryItem(id, mentions.body);
+  await mentions.notify((req as any).user, data);
   return ApiResponse.success(res, 200, 'Inventory item updated successfully', data);
 });
 

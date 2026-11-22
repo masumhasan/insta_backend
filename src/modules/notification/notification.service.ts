@@ -1,5 +1,5 @@
 import { Notification } from './notification.model';
-import { User } from '../auth/user.model';
+import { notifyMentions } from './mentions';
 import { AppError } from '../../utils/apiError';
 
 function buildRecipientFilter(query: { userId?: string; email?: string; role?: string }) {
@@ -29,6 +29,7 @@ export class NotificationService {
       message: n.message,
       type: n.type,
       referenceId: n.referenceId || '',
+      link: n.link || '',
       read: Boolean(n.read),
       createdBy: n.createdBy || 'System',
       createdAt: n.createdAt ? new Date(n.createdAt).toISOString() : new Date().toISOString(),
@@ -75,37 +76,9 @@ export class NotificationService {
     }
   }
 
+  /** Older "@handle" mentions (media task notes). New notes use notifyMentions in ./mentions with user ids. */
   static async notifyMentions(text: string, authorName: string, referenceId: string = '') {
-    const matches = Array.from(new Set((text.match(/@([A-Za-z0-9_.-]+)/g) || []).map((m) => m.slice(1))));
-    if (matches.length === 0) return [];
-
-    const users = await User.find({ status: { $ne: 'blocked' } }).select('name email role').lean();
-    const created: any[] = [];
-
-    for (const handle of matches) {
-      const lower = handle.toLowerCase();
-      const target = users.find(
-        (u: any) =>
-          u.name?.toLowerCase().replace(/\s+/g, '') === lower ||
-          u.name?.toLowerCase().split(/\s+/)[0] === lower ||
-          u.email?.toLowerCase().split('@')[0] === lower
-      );
-      if (target) {
-        created.push(
-          await this.createNotification({
-            recipientUserId: target._id.toString(),
-            recipientEmail: target.email,
-            recipientRole: target.role,
-            title: `Mentioned by ${authorName}`,
-            message: text,
-            type: 'mention',
-            referenceId,
-            createdBy: authorName,
-          })
-        );
-      }
-    }
-    return created;
+    return notifyMentions({ text, author: { name: authorName }, referenceId });
   }
 
   /** A notification belongs to a user when it targets their id, email or role (or everyone). Staff may touch any. */

@@ -1,8 +1,28 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import { stampStatusDates } from './order.dates';
 
 export interface IOrderPhoto {
   imageUrl: string;
   publicId: string;
+}
+
+/** Customer approval of custom printed pieces (see order.designApproval.ts). Absent on orders that need none. */
+export interface IDesignApproval {
+  required: boolean;
+  status: 'pending' | 'approved' | 'changes_requested';
+  requestedAt?: Date;
+  respondedAt?: Date;
+  respondedBy?: string;
+  respondedById?: string;
+  note?: string;
+  proofs?: { imageUrl: string; publicId: string; note: string; uploadedBy: string; at: Date }[];
+  productionCompletedAt?: Date;
+  productionCompletedBy?: string;
+  /** Inventory rows created for the custom pieces on "Ready to Install" (also kept on each customItem). */
+  inventoryIds?: string[];
+  /** Short lock while those rows are created, so two clicks never create them twice. */
+  lockedAt?: Date | null;
+  history?: { action: string; by: string; byId: string; role: string; note: string; at: Date }[];
 }
 
 export interface IOrderDocument extends Document {
@@ -27,6 +47,8 @@ export interface IOrderDocument extends Document {
   appointmentTime?: string;
   onsiteDuration?: number;
   notes?: string;
+  /** Internal staff notes and status notes with @mentions (see order.notes.ts); never shown to customers. */
+  noteLog?: Array<{ id: string; text: string; status?: string; mentions: string[]; author: string; authorId: string; createdAt: Date }>;
   installerName?: string;
   installerEmail?: string;
   installerId?: string;
@@ -41,6 +63,10 @@ export interface IOrderDocument extends Document {
   /** Set when every pull-list item is verified and the order is marked Ready for Install. */
   pullReadyAt?: Date;
   pullReadyBy?: string;
+  /** Status timestamps, stamped by the pre-save hook (see order.dates.ts). */
+  installedAt?: Date;
+  removedAt?: Date;
+  completedAt?: Date;
   pullList?: {
     id: string;
     product: string;
@@ -65,6 +91,7 @@ export interface IOrderDocument extends Document {
     createdAt: string;
   }[];
   events?: { type: string; at: Date }[];
+  designApproval?: IDesignApproval;
   /** Stripe card charges. `attempts` only grows after a decline, so a retried attempt reuses its idempotency key. */
   payment?: {
     /** Customer who placed and pays for the order (e.g. a Team Lead ordering for an agent). */
@@ -111,6 +138,7 @@ const orderSchema = new Schema<IOrderDocument>(
     appointmentTime: { type: String, default: '' },
     onsiteDuration: { type: Number, default: 60 },
     notes: { type: String, default: '' },
+    noteLog: { type: [Schema.Types.Mixed], default: [] },
     installerName: { type: String, default: '', index: true },
     installerEmail: { type: String, default: '', index: true },
     installerId: { type: String, default: '', index: true },
@@ -119,6 +147,9 @@ const orderSchema = new Schema<IOrderDocument>(
     dueDateRequest: { type: Schema.Types.Mixed, default: { status: 'none' } },
     pullReadyAt: { type: Date },
     pullReadyBy: { type: String, default: '' },
+    installedAt: { type: Date },
+    removedAt: { type: Date },
+    completedAt: { type: Date, index: true },
     pullList: [
       {
         id: { type: String },
@@ -154,6 +185,7 @@ const orderSchema = new Schema<IOrderDocument>(
       },
     ],
     payment: { type: Schema.Types.Mixed, default: undefined },
+    designApproval: { type: Schema.Types.Mixed, default: undefined },
   },
   { timestamps: true }
 );
@@ -162,7 +194,10 @@ const orderSchema = new Schema<IOrderDocument>(
 // whenever an order is saved with a changed status or date.
 orderSchema.pre('save', async function (next) {
   try {
-    if (this.isNew) return next();
+    if (this.isNew) {
+      stampStatusDates(this);
+      return next();
+    }
 
     // Automatic status progression (an explicit status change always wins).
     if (!this.isModified('status')) {
@@ -171,7 +206,7 @@ orderSchema.pre('save', async function (next) {
       const hasInstaller = !!String(this.installerName || '').trim();
       const hasSchedule = !!String(this.appointmentTime || '').trim();
       const isHold = /^(on hold|waiting on payment)$/i.test(cur);
-      const isEarly = /^(pending|scheduled)/i.test(cur);
+      const isEarly = /^(pending|scheduled|ready to install)/i.test(cur);
       if (isHold && this.isModified('paymentStatus') && this.paymentStatus === 'Paid') {
         // Payment processed → release the hold into the right stage of the pipeline.
         this.status = hasInstaller ? `Assigned${suffix}` : hasSchedule ? `Scheduled${suffix}` : `Pending${suffix}`;
@@ -183,6 +218,7 @@ orderSchema.pre('save', async function (next) {
     }
 
     const statusChanged = this.isModified('status');
+    if (statusChanged) stampStatusDates(this);
     const dateChanged = this.isModified('dueDate') || this.isModified('appointmentTime');
     if (!statusChanged && !dateChanged) return next();
 

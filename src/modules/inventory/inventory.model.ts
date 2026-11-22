@@ -78,6 +78,8 @@ export interface IInventoryDocument extends Document {
   grommetPlacement?: string;
   additionalSpecs?: string;
   notes?: string;
+  /** Personnel @mentioned in `notes` (set by inventory.notes.ts). */
+  notesMentions?: string[];
   allowCustomization?: boolean;
   lastUpdated?: string;
   history?: IInventoryHistoryEntry[];
@@ -126,6 +128,7 @@ const inventorySchema = new Schema<IInventoryDocument>(
     grommetPlacement: { type: String, default: '' },
     additionalSpecs: { type: String, default: '' },
     notes: { type: String, default: '' },
+    notesMentions: { type: [String], default: [] },
     allowCustomization: { type: Boolean, default: false },
     itemId: { type: String, index: true, sparse: true, unique: true },
     ownerType: { type: String, enum: ['Agent', 'Office', 'Sign company'], default: 'Sign company' },

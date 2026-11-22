@@ -1,6 +1,7 @@
 import { User } from '../auth/user.model';
 import { Order } from '../order/order.model';
 import { getDashboardMetrics } from './dashboardMetrics.service';
+import type { TrendGranularity } from './dashboardTrends';
 import { AppError } from '../../utils/apiError';
 import { extractImageFields, cleanupReplacedAsset } from '../../utils/imageGuard';
 import { CloudinaryService } from '../../utils/cloudinary.service';
@@ -156,7 +157,7 @@ export class AdminService {
     return { success: true };
   }
 
-  static async getDashboardStats() {
+  static async getDashboardStats(granularity: TrendGranularity = 'monthly') {
     const { Inventory } = await import('../inventory/inventory.model');
     const [totalUsers, pendingApprovals, totalOrders, inventoryCount, orders] = await Promise.all([
       User.countDocuments({ role: { $ne: 'Admin' } }),
@@ -181,7 +182,7 @@ export class AdminService {
       link: '/orders',
     }));
 
-    const metrics = await getDashboardMetrics();
+    const metrics = await getDashboardMetrics(granularity);
 
     return {
       metrics,

@@ -16,6 +16,7 @@ import {
   getMediaDeliveries,
   createMediaDelivery,
 } from './ops.controller';
+import { getMediaAvailabilityHandler } from './ops.availability';
 import { getPublishedReviews, getReviews, createReview, updateReview, deleteReview } from './review.controller';
 
 const router = Router();
@@ -51,6 +52,8 @@ router.post('/calendars', mediaTeam, createCalendarEvent);
 router.delete('/calendars/:id', mediaTeam, deleteCalendarEvent);
 
 router.get('/available-slots', getAvailableSlots);
+// Free media appointment start times for ?date=YYYY-MM-DD&durationMinutes=N (business hours, booked shoots).
+router.get('/media-availability', getMediaAvailabilityHandler);
 
 router.get('/media-delivery', getMediaDeliveries);
 router.post('/media-delivery', mediaTeam, createMediaDelivery);

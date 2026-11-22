@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AdminService } from './admin.service';
 import { ApiResponse } from '../../utils/apiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
+import { parseGranularity } from './dashboardTrends';
 
 export const getAdmins = asyncHandler(async (req: Request, res: Response) => {
   const result = await AdminService.getAdmins(req.query);
@@ -25,7 +26,7 @@ export const deleteAdmin = asyncHandler(async (req: Request, res: Response) => {
   return ApiResponse.success(res, 200, 'Admin deleted successfully');
 });
 
-export const getDashboardStats = asyncHandler(async (_req: Request, res: Response) => {
-  const result = await AdminService.getDashboardStats();
+export const getDashboardStats = asyncHandler(async (req: Request, res: Response) => {
+  const result = await AdminService.getDashboardStats(parseGranularity(req.query.granularity));
   return ApiResponse.success(res, 200, 'Dashboard stats retrieved successfully', result);
 });

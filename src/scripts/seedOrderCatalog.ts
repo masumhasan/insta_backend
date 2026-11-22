@@ -1,8 +1,10 @@
 // Run: npx ts-node src/scripts/seedOrderCatalog.ts
 // Idempotent. Moves values that used to be hardcoded in the portals' order forms into MongoDB:
 //  - the `pricing` setting (rush fee, card fee %, tax %)
-//  - order add-ons (settings_service with options.addOn = true)
-//  - the "Other services" request list (service items in the "Other Services" category, price 0 = quote)
+//  - New Sign Install add-ons: `service` items with options.orderType = 'sign_installations'
+//    (Items & Pricing → Add-On Services, read by GET /catalog/add-ons?orderType=…)
+//  - the "Other services" request list: `service` items in the "Other Services" category with
+//    options.orderType = 'other_services' (price 0 = quote)
 import mongoose from 'mongoose';
 import { config } from '../config/env';
 import { AppSetting } from '../modules/ops/ops.model';
@@ -25,6 +27,8 @@ const OTHER_SERVICES = [
   'Commercial Post Removal',
 ];
 
+const NO_ORDER_TYPE = { $in: [null, ''] };
+
 (async () => {
   await mongoose.connect(config.mongodbUri);
 
@@ -32,19 +36,40 @@ const OTHER_SERVICES = [
   await AppSetting.updateOne({ key: 'pricing' }, { $setOnInsert: { key: 'pricing', value: DEFAULT_PRICING, updatedBy: 'seed' } }, { upsert: true });
 
   for (const a of ADD_ONS) {
+    // Earlier runs stored these as `settings_service` rows flagged addOn; move them (same _id, so old orders still
+    // point at them) to Add-On Services under the New Sign Install form.
     await ServiceItem.updateOne(
-      { type: 'settings_service', name: a.name, category: 'Add-on' },
-      { $setOnInsert: { type: 'settings_service', name: a.name, category: 'Add-on', price: a.price, description: a.description, options: { addOn: true } } },
+      { type: 'settings_service', name: a.name, category: 'Add-on', 'options.addOn': true },
+      { $set: { type: 'service', 'options.orderType': 'sign_installations' } }
+    );
+    await ServiceItem.updateOne(
+      { type: 'service', name: a.name, category: 'Add-on' },
+      {
+        $setOnInsert: {
+          type: 'service', name: a.name, category: 'Add-on', price: a.price, description: a.description,
+          options: { orderType: 'sign_installations', visibility: 'everyone', active: true },
+        },
+      },
       { upsert: true }
     );
   }
   for (const name of OTHER_SERVICES) {
     await ServiceItem.updateOne(
       { type: 'service', name, category: 'Other Services' },
-      { $setOnInsert: { type: 'service', name, category: 'Other Services', price: 0, description: 'Quoted by the sign company after review.' } },
+      {
+        $setOnInsert: {
+          type: 'service', name, category: 'Other Services', price: 0, description: 'Quoted by the sign company after review.',
+          options: { orderType: 'other_services', visibility: 'everyone' },
+        },
+      },
       { upsert: true }
     );
   }
+  // Older "Other Services" rows had no order type; link them to the Order Other Service form.
+  await ServiceItem.updateMany(
+    { type: 'service', category: 'Other Services', 'options.orderType': NO_ORDER_TYPE },
+    { $set: { 'options.orderType': 'other_services' } }
+  );
 
   console.log('[Seed] pricing setting, add-ons and other services are in place.');
   await mongoose.disconnect();

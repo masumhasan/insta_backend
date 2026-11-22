@@ -1,8 +1,9 @@
 import { Order } from '../order/order.model';
 import { ClientInvoice } from '../invoice/invoice.model';
 import { Inventory } from '../inventory/inventory.model';
+import { LOW_STOCK_AT } from '../inventory/inventory.stock';
+import { buildTrends, type TrendGranularity } from './dashboardTrends';
 
-const LOW_STOCK_THRESHOLD = 5;
 const PRINT_TYPE = /print/i;
 
 const amountOf = (o: any): number =>
@@ -22,8 +23,8 @@ const dayRange = (offset: number) => {
 const countEvents = (orders: any[], type: string, start: Date, end: Date) =>
   orders.filter((o) => (o.events || []).some((e: any) => e.type === type && e.at >= start && e.at < end)).length;
 
-/** Dashboard metrics shared by the Admin and Sign Company portals (GET /admin/dashboard-stats). */
-export async function getDashboardMetrics() {
+/** Dashboard metrics shared by the Admin and Sign Company portals (GET /admin/dashboard-stats?granularity=). */
+export async function getDashboardMetrics(granularity: TrendGranularity = 'monthly') {
   const today = dayRange(0);
   const tomorrow = dayRange(1);
   const monthStart = new Date(today.start.getFullYear(), today.start.getMonth(), 1);
@@ -31,7 +32,7 @@ export async function getDashboardMetrics() {
   const [orders, unpaidInvoices, lowStockInventory] = await Promise.all([
     Order.find({}, 'type status paymentStatus totalAmount price refunds events createdAt dueDate').lean(),
     ClientInvoice.countDocuments({ payment: 'Unpaid' }),
-    Inventory.countDocuments({ available: { $lte: LOW_STOCK_THRESHOLD } }),
+    Inventory.countDocuments({ available: { $lte: LOW_STOCK_AT } }),
   ]);
 
   const live = orders.filter((o: any) => !/^cancelled$/i.test(o.status));
@@ -70,5 +71,6 @@ export async function getDashboardMetrics() {
     toComplete,
     today: dayMetrics(today),
     tomorrow: dayMetrics(tomorrow),
+    trends: buildTrends(orders, granularity, amountOf, refundedOf),
   };
 }

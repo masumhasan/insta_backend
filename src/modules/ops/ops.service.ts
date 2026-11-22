@@ -2,17 +2,6 @@ import { AppSetting, MediaTask, CalendarEvent, MediaDelivery } from './ops.model
 import { NotificationService } from '../notification/notification.service';
 import { AppError } from '../../utils/apiError';
 
-const formatTimeMinutes = (label: string): number => {
-  const m = label.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/);
-  if (!m) return 9 * 60;
-  let hr = Number(m[1]);
-  const min = Number(m[2] || 0);
-  const ampm = (m[3] || '').toUpperCase();
-  if (ampm === 'PM' && hr < 12) hr += 12;
-  if (ampm === 'AM' && hr === 12) hr = 0;
-  return hr * 60 + min;
-};
-
 /**
  * Operations service handling settings, working hours, photographer calendars, media tasks, and delivery galleries.
  */
@@ -123,7 +112,8 @@ export class OpsService {
   }
 
   static async createCalendarEvent(payload: any) {
-    const doc = await CalendarEvent.create(payload);
+    // The Calendar page sends `timeSlot` ("9am"); the stored field is `time`.
+    const doc = await CalendarEvent.create({ ...payload, time: payload?.time || payload?.timeSlot });
     return { ...doc.toObject(), id: doc._id.toString() };
   }
 
@@ -132,23 +122,11 @@ export class OpsService {
     return true;
   }
 
-  /**
-   * Computes valid media start slots enforcing that onsiteDuration finishes before business closing time.
-   */
+  /** Old slot list (start labels only); same rules as GET /ops/media-availability. */
   static async getAvailableSlots(query: { date?: string; durationMinutes?: any }) {
-    const duration = Math.max(15, Number(query.durationMinutes) || 60);
-    const hoursSetting = await AppSetting.findOne({ key: 'working_hours' }).lean();
-    const endHour = hoursSetting?.value?.endTime || '6:00 PM';
-    const closeMin = formatTimeMinutes(endHour);
-    const candidates = ['8:00 AM', '9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM'];
-
-    const existing = query.date ? await CalendarEvent.find({ date: query.date }).lean() : [];
-    const booked = new Set(existing.map((e: any) => e.time.toLowerCase()));
-
-    return candidates.filter((slot) => {
-      const startMin = formatTimeMinutes(slot);
-      return startMin + duration <= closeMin && !booked.has(slot.toLowerCase());
-    });
+    const { getMediaAvailability } = await import('./ops.availability');
+    const date = query.date || new Date().toISOString().slice(0, 10);
+    return (await getMediaAvailability({ date, durationMinutes: query.durationMinutes || 60 })).slots;
   }
 
   static async getMediaDeliveries(query: { search?: string } = {}) {

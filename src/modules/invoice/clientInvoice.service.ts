@@ -2,6 +2,7 @@ import { ClientInvoice, IClientInvoiceDocument } from './invoice.model';
 import { Order } from '../order/order.model';
 import { NotificationService } from '../notification/notification.service';
 import { AppError } from '../../utils/apiError';
+import { formatUsDate, usDatesInText } from '../../utils/formatUsDate';
 import { buildInvoicePdfBuffer, type IPdfLine } from './invoice.pdf';
 import { Counter, nextSequence } from '../inventory/counter.model';
 import { buildScopeClause, isOrderVisibleToUser } from '../order/order.service';
@@ -274,9 +275,9 @@ export class ClientInvoiceService {
     const lines: IPdfLine[] = [
       { text: `Invoice Number: ${inv.invoiceNo}`, bold: true, size: 11 },
       { text: `Order ID: ${inv.orderId || 'N/A'}    |    Service Type: ${inv.type}` },
-      { text: `Order Date: ${inv.orderDate}    |    Due Date: ${inv.dueDate || 'Due on Receipt'}` },
+      { text: `Order Date: ${formatUsDate(inv.orderDate, { dayFirst: true })}    |    Due Date: ${formatUsDate(inv.dueDate) || 'Due on Receipt'}` },
       { text: `Payment Status: ${inv.payment}${inv.paymentMethod ? ` (${inv.paymentMethod})` : ''}`, bold: true },
-      ...(inv.paymentDate ? [{ text: `Paid Date: ${inv.paymentDate}${inv.paymentReference ? `  Ref: ${inv.paymentReference}` : ''}` }] : []),
+      ...(inv.paymentDate ? [{ text: `Paid Date: ${formatUsDate(inv.paymentDate)}${inv.paymentReference ? `  Ref: ${inv.paymentReference}` : ''}` }] : []),
       { text: '' },
       { text: 'BILL TO', bold: true, size: 11 },
       { text: `${inv.clientName}${inv.clientEmail ? ` (${inv.clientEmail})` : ''}` },
@@ -295,7 +296,7 @@ export class ClientInvoiceService {
         ? [
             { text: '' },
             { text: `REFUNDS APPLIED (-$${refundedTotal.toFixed(2)})`, bold: true },
-            ...inv.refunds.map((r) => ({ text: `  - [${r.createdAt}] ${r.type}: $${Number(r.amount).toFixed(2)} (${r.reason})` })),
+            ...inv.refunds.map((r) => ({ text: `  - [${usDatesInText(r.createdAt)}] ${r.type}: $${Number(r.amount).toFixed(2)} (${r.reason})` })),
           ]
         : []),
     ];

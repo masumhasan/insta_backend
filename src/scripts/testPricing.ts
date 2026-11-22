@@ -1,7 +1,8 @@
 // Run: npx ts-node src/scripts/testPricing.ts   (offline, no database)
 import assert from 'node:assert/strict';
 import { computeTotals, DEFAULT_PRICING } from '../modules/order/order.pricing';
-import { itemFeeOf, setupTotal } from '../modules/order/order.postMath';
+import { customPrintPrice, itemFeeOf, normalizeSize, setupTotal } from '../modules/order/order.postMath';
+import { computeSlots, toMinutes } from '../modules/ops/ops.availability';
 
 const cfg = DEFAULT_PRICING; // rush 25, card 3%, tax 8.25%
 
@@ -40,4 +41,29 @@ assert.equal(itemFeeOf({ ownerType: 'Sign company', rentalPrice: 'n/a' }), 0);
 const twoPosts = [setupTotal(45, [10]), setupTotal(40, [10, 5])].reduce((s, x) => s + x.total, 0);
 assert.equal(twoPosts, 110);
 
+
+// Media appointment slots: every 15 minutes, only when the whole shoot ends by close, never over a booked shoot.
+const day = { open: toMinutes('11:00 AM - CDT')!, close: toMinutes('6:00 PM')!, capacity: 1 };
+const openDay = computeSlots({ ...day, duration: 90, busy: [] });
+assert.equal(openDay[0], '11:00 AM');
+assert.equal(openDay[openDay.length - 1], '4:30 PM'); // 4:30 + 90 min = 6:00 PM
+const booked = computeSlots({ ...day, duration: 60, busy: [{ start: toMinutes('1:00 PM')!, end: toMinutes('2:30 PM')! }] });
+assert.ok(booked.includes('12:00 PM') && booked.includes('2:30 PM'));
+assert.ok(!booked.includes('12:15 PM') && !booked.includes('2:15 PM') && !booked.includes('1:00 PM'));
+// Two photographers can take overlapping shoots; a third overlapping one is refused.
+const twoTeam = computeSlots({ ...day, capacity: 2, duration: 60, busy: [{ start: 780, end: 840 }, { start: 780, end: 840 }] });
+assert.ok(!twoTeam.includes('1:00 PM') && computeSlots({ ...day, capacity: 2, duration: 60, busy: [{ start: 780, end: 840 }] }).includes('1:00 PM'));
+// Today: nothing at or before the current time, aligned to the 15-minute grid.
+assert.equal(computeSlots({ ...day, duration: 30, busy: [], notBefore: toMinutes('1:07 PM')! })[0], '1:15 PM');
+assert.deepEqual(computeSlots({ ...day, duration: 480, busy: [] }), []);
+// Custom (designed / uploaded) pieces: Printing size (rider sizes for riders) + material + option.
+const printCat = {
+  sizes: [{ name: '24" x 6"', price: 20, category: 'Rider' }, { name: '24x6', price: 50, category: 'Yard Sign' }, { name: '18x24', price: 30, category: 'Yard Sign' }],
+  materials: [{ name: 'Reflective ACM', price: 6.5 }],
+};
+assert.equal(normalizeSize('24 in x 6 in'), '24x6');
+assert.equal(customPrintPrice(printCat, { size: '24x6', material: 'reflective acm', optionPrice: 2, rider: true }), 28.5);
+assert.equal(customPrintPrice(printCat, { size: '24x6', material: '', rider: false }), 50);
+assert.equal(customPrintPrice(printCat, { size: '18 x 24', material: 'Unknown', rider: true }), 30);
+assert.equal(customPrintPrice(printCat, { size: '', material: '', rider: true }), 0);
 console.log('pricing tests passed');

@@ -27,6 +27,8 @@ export interface IUserDocument extends Document {
   company?: string;
   office?: string;
   brokerage?: string;
+  /** Brokerage catalog item (ServiceItem type "brokerage") the agent is linked to; `brokerage` holds its name. */
+  brokerageId?: string;
   howDidYouHear?: string;
   imageUrl?: string;
   publicId?: string;
@@ -55,6 +57,8 @@ export interface IUserDocument extends Document {
     date: string;
     author?: string;
     initials?: string;
+    /** Users @mentioned in the note. */
+    mentions?: string[];
   }>;
   permissions?: Record<string, boolean>;
   status: 'active' | 'blocked' | 'pending_approval' | 'pending' | 'rejected';
@@ -84,6 +88,7 @@ const userSchema = new Schema<IUserDocument>(
     company: { type: String, default: 'Instapost' },
     office: { type: String, default: '' },
     brokerage: { type: String, default: '' },
+    brokerageId: { type: String, default: '' },
     howDidYouHear: { type: String, default: '', trim: true },
     imageUrl: { type: String, default: '' },
     publicId: { type: String, default: '' },
@@ -108,6 +113,7 @@ const userSchema = new Schema<IUserDocument>(
           date: { type: String },
           author: { type: String, default: 'Current User' },
           initials: { type: String, default: 'CU' },
+          mentions: { type: [String], default: undefined },
         },
       ],
       default: [],

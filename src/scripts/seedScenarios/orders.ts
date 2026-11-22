@@ -3,6 +3,7 @@ import { ClientInvoice } from '../../modules/invoice/invoice.model';
 import { ReturnRecord } from '../../modules/inventory/return.model';
 import { Inventory } from '../../modules/inventory/inventory.model';
 import { computeTotals, DEFAULT_PRICING } from '../../modules/order/order.pricing';
+import { isCompletionStatus } from '../../modules/order/order.dates';
 import { ADDRESSES, SAMPLE_PHOTOS, TAG, dmy, iso, money, on, type People, type Person } from './helpers';
 import { PULL_SETS } from './inventory';
 
@@ -57,6 +58,18 @@ export const SCENARIOS: Scenario[] = [
 ];
 
 const pick = <T,>(list: T[], i: number): T => list[i % list.length];
+
+const statusDates = (s: Scenario) => {
+  const at = new Date(Date.now() - Math.max(0, (s.days ?? 1) - 2) * 86400000);
+  const later = new Date(Math.min(Date.now(), at.getTime() + 86400000));
+  const upDown = ['For Sale Directionals', 'Open House Services'].includes(s.type);
+  const out: Record<string, Date> = {};
+  if (s.status === 'Installed' || (upDown && s.status === 'Completed')) out.installedAt = at;
+  if (s.status === 'Removed') out.removedAt = at;
+  if (upDown && s.status === 'Completed') out.removedAt = out.completedAt = later;
+  else if (isCompletionStatus(s.type, s.status)) out.completedAt = at;
+  return out;
+};
 
 const installSpecs = (i: number) => ({
   firstName: pick(['Jordan', 'Taylor', 'Morgan', 'Casey', 'Riley', 'Avery'], i),
@@ -132,6 +145,8 @@ export async function seedOrders(people: People) {
             : [],
           specifications: { seed: TAG, ...(isInstall ? installSpecs(idx) : {}), ...(s.extra || {}) },
         },
+        // Field work happened two days after the order was placed (see order.dates.ts for how each date is used).
+        ...(Object.keys(statusDates(s)).length ? { $set: statusDates(s) } : {}),
       },
       { upsert: true }
     );

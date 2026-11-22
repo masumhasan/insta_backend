@@ -2,6 +2,10 @@ import { Request, Response } from 'express';
 import { CatalogService } from './catalog.service';
 import { ApiResponse } from '../../utils/apiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
+import { listAddOns, listPrintOptions } from './catalog.addons';
+import { listActiveAnnouncements } from './catalog.announcements';
+import { AppError } from '../../utils/apiError';
+import { isStaff } from '../../middlewares/roleGuard.middleware';
 
 // Warehouses
 export const getWarehouses = asyncHandler(async (req: Request, res: Response) => {
@@ -90,6 +94,8 @@ export const deleteCoupon = asyncHandler(async (req: Request, res: Response) => 
 // Service Items
 export const getServiceItems = asyncHandler(async (req: Request, res: Response) => {
   const type = (req.query.type as string) || (req.params.type as string) || 'service';
+  // The full announcement list (every audience and date window) is for staff; others read /announcements/active.
+  if (type === 'announcement' && !isStaff((req as any).user)) throw new AppError('Access forbidden.', 403);
   const data = await CatalogService.getServiceItems(type);
   return ApiResponse.success(res, 200, `${type} items retrieved successfully`, data);
 });
@@ -109,8 +115,20 @@ export const deleteServiceItem = asyncHandler(async (req: Request, res: Response
   return ApiResponse.success(res, 200, 'Service item deleted successfully');
 });
 
+// Active add-ons of one order form (?orderType=sign_installations|for_sale|open_house|media_service|other_services)
+export const getAddOns = asyncHandler(async (req: Request, res: Response) => {
+  const data = await listAddOns(req.query.orderType ?? req.query.type, (req as any).user);
+  return ApiResponse.success(res, 200, 'Add-ons retrieved successfully', data);
+});
+
+// Active print options (?appliesTo=sign|rider)
+export const getPrintOptions = asyncHandler(async (req: Request, res: Response) => {
+  const data = await listPrintOptions(req.query.appliesTo);
+  return ApiResponse.success(res, 200, 'Print options retrieved successfully', data);
+});
+
+// Filtered by the caller's role and the date window on the server; a ?portal= hint is ignored.
 export const getActiveAnnouncements = asyncHandler(async (req: Request, res: Response) => {
-  const portal = String(req.query.portal || "all");
-  const data = await CatalogService.getActiveAnnouncements(portal);
+  const data = await listActiveAnnouncements(String((req as any).user?.role || ''));
   return ApiResponse.success(res, 200, "Active announcements retrieved", data);
 });

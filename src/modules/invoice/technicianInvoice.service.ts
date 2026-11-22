@@ -1,6 +1,7 @@
 import { TechnicianInvoice, ITechAppointment } from './invoice.model';
 import { NotificationService } from '../notification/notification.service';
 import { AppError } from '../../utils/apiError';
+import { formatUsDate, usDatesInText } from '../../utils/formatUsDate';
 import { buildInvoicePdfBuffer, type IPdfLine } from './invoice.pdf';
 
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
@@ -208,8 +209,8 @@ export class TechnicianInvoiceService {
     const lines: IPdfLine[] = [
       { text: `Invoice Number: ${doc.invoiceNumber}`, bold: true, size: 11 },
       { text: `Technician: ${doc.technicianName} (${doc.role})` },
-      { text: `Date Range: ${doc.dateRange}` },
-      { text: `Status: ${doc.status.toUpperCase()}${doc.paidAt ? ` (Paid ${doc.paidAt})` : ''}`, bold: true },
+      { text: `Date Range: ${usDatesInText(doc.dateRange)}` },
+      { text: `Status: ${doc.status.toUpperCase()}${doc.paidAt ? ` (Paid ${formatUsDate(doc.paidAt)})` : ''}`, bold: true },
       { text: '' },
       { text: `APPOINTMENTS (${doc.appointmentList.length})`, bold: true, size: 11 },
       ...doc.appointmentList.flatMap((a) => {
@@ -218,7 +219,7 @@ export class TechnicianInvoiceService {
           .reduce((sum, s) => sum + (s.overrideAmount ?? s.payout), 0);
         const cfTotal = a.customFees.reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
         return [
-          { text: `  * [${a.date}] ${a.address}`, bold: true },
+          { text: `  * [${usDatesInText(formatUsDate(a.date))}] ${a.address}`, bold: true },
           { text: `    Services: $${svcTotal.toFixed(2)} | Custom Fees: $${cfTotal.toFixed(2)}` },
         ];
       }),

@@ -6,6 +6,8 @@ import { NotificationService } from '../notification/notification.service';
 import { randomBytes } from 'crypto';
 import { assertCanList, assertCanManage, isSelf } from './user.policy';
 import { isStaff } from '../../middlewares/roleGuard.middleware';
+import { applyStaffProfileFields } from './user.profile';
+import { notifyMentions, extractMentions } from '../notification/mentions';
 
 export interface IGetUsersQuery {
   role?: string;
@@ -74,6 +76,7 @@ export class UserService {
       company: u.company || 'Instapost',
       office: u.office || '',
       brokerage: u.brokerage || u.crm?.brokerage || '',
+      brokerageId: u.brokerageId || '',
       howDidYouHear: u.howDidYouHear || '',
       staffRole: u.staffRole || '',
       parentAgentId: u.parentAgentId || '',
@@ -190,7 +193,7 @@ export class UserService {
     if (!self || isStaff(actor)) assertCanManage(actor, user.role, user.parentAgentId, 'edit');
     if (!isStaff(actor)) {
       // Managers and the user themselves cannot change identity, ownership or CRM/approval fields.
-      for (const k of ['role', 'parentAgentId', 'company', 'staffRole', 'teamLeadApplication', 'crm', 'paymentMethodPreference']) delete payload[k];
+      for (const k of ['role', 'parentAgentId', 'company', 'staffRole', 'teamLeadApplication', 'crm', 'paymentMethodPreference', 'email', 'brokerageId']) delete payload[k];
       if (self || !['active', 'blocked'].includes(payload.status)) delete payload.status;
     }
     if (payload.role) {
@@ -207,6 +210,7 @@ export class UserService {
     if (payload.status) user.status = payload.status;
     if (payload.office !== undefined) user.office = payload.office;
     if (payload.brokerage !== undefined) user.brokerage = payload.brokerage;
+    await applyStaffProfileFields(user, payload);
     if (payload.staffRole !== undefined) user.staffRole = payload.staffRole;
     if (payload.parentAgentId !== undefined) user.parentAgentId = payload.parentAgentId;
     if (payload.paymentMethodPreference !== undefined) {
@@ -261,7 +265,10 @@ export class UserService {
       email: user.email,
       role: user.role,
       phone: user.phone || '',
+      address: user.address || '',
+      office: user.office || '',
       brokerage: user.brokerage || '',
+      brokerageId: user.brokerageId || '',
       lastContactDate: user.lastContactDate || '',
       nextContactDate: user.nextContactDate || '',
       contactNote: user.contactNote || '',
@@ -344,11 +351,12 @@ export class UserService {
     return user.teamLeadApplication;
   }
 
-  static async addCrmNote(id: string, payload: { text: string; author?: string; initials?: string }, actor?: any) {
+  static async addCrmNote(id: string, payload: { text: string; author?: string; initials?: string; mentions?: string[] }, actor?: any) {
     const user = await User.findById(id);
     if (!user) throw new AppError('User not found.', 404);
     const text = String(payload.text || '').trim();
     if (!text) throw new AppError('Note text is required.', 400);
+    const mentioned = await extractMentions(text, payload.mentions);
 
     const now = new Date();
     const formattedDate = `${now.toLocaleString('default', { month: 'short' })} ${now.getDate()}, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
@@ -362,6 +370,7 @@ export class UserService {
       initials,
       date: formattedDate,
       createdAt: now.toISOString(),
+      mentions: mentioned.map((m) => m.id),
     };
 
     if (!user.activityNotes) user.activityNotes = [];
@@ -381,7 +390,14 @@ export class UserService {
 
     await user.save();
 
-    await NotificationService.notifyMentions(text, entry.author, user._id.toString());
+    await notifyMentions({
+      text,
+      resolved: mentioned,
+      author: { id: actor?._id ? String(actor._id) : undefined, name: entry.author },
+      context: `${user.name}'s CRM notes`,
+      link: user.role === 'Agent' ? `/users/agents/${user._id}` : '',
+      referenceId: user._id.toString(),
+    });
     return entry;
   }
 }
